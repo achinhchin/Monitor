@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Monitor Control</title>
+<link rel="stylesheet" href="/shared/fonts.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="blobs"><i></i><i></i><i></i></div>
+
+<header class="glass bar">
+  <b class="brand">◐ control</b>
+  <span id="conn" class="pill"><i class="dot"></i><span>connecting</span></span>
+  <span id="scr" class="pill">no monitor</span>
+  <span class="grow"></span>
+  <span id="stClock" class="pill">--:--</span>
+  <span id="stSeason" class="pill">—</span>
+  <span id="stRain" class="pill">—</span>
+</header>
+
+<main>
+  <aside class="glass col" id="listCol">
+    <div class="head"><h2>Notes</h2><button id="newNote" class="btn pri">+ New</button></div>
+    <ul id="list"></ul>
+  </aside>
+
+  <section class="glass col" id="editCol">
+    <div id="empty" class="empty">Create or pick a note</div>
+    <div id="editor" hidden>
+      <div class="row">
+        <input id="title" class="in grow" placeholder="Title">
+        <label class="sw" title="Show on monitor"><input type="checkbox" id="enabled"><span></span></label>
+        <button id="del" class="btn ghost" title="Delete">✕</button>
+      </div>
+      <div class="row tabs">
+        <button data-view="split" class="seg on">Split</button><button data-view="edit" class="seg">Edit</button><button data-view="prev" class="seg">Preview</button>
+        <span class="grow"></span>
+        <label class="mini">font <input id="fs" type="number" class="in num" min="6" max="120"></label>
+      </div>
+      <div id="panes" class="panes split">
+        <textarea id="content" class="in md" spellcheck="false" placeholder="# Markdown here…"></textarea>
+        <div id="preview" class="md-view"></div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="col side">
+    <div class="glass card">
+      <div class="head"><h2>Position</h2><button id="openScreen" class="btn pri">⛶ Screen</button></div>
+      <div id="posBox">
+        <div class="pad">
+          <button data-mv="0,-1,1" class="btn">↑</button>
+          <button data-mv="-1,0,1" class="btn">←</button><button data-mv="1,0,1" class="btn">→</button>
+          <button data-mv="0,1,1" class="btn">↓</button>
+          <span class="lbl">fast</span>
+        </div>
+        <div class="pad fine">
+          <button data-mv="0,-1,0" class="btn">↑</button>
+          <button data-mv="-1,0,0" class="btn">←</button><button data-mv="1,0,0" class="btn">→</button>
+          <button data-mv="0,1,0" class="btn">↓</button>
+          <span class="lbl">fine</span>
+        </div>
+        <div class="grid4">
+          <label>x<input data-k="x" class="in num" type="number"></label>
+          <label>y<input data-k="y" class="in num" type="number"></label>
+          <label>w<input data-k="w" class="in num" type="number"></label>
+          <label>h<input data-k="h" class="in num" type="number"></label>
+        </div>
+        <div class="row"><label class="mini">fast step <input id="fastStep" class="in num" type="number" value="40" min="2"></label><label class="mini">fine <input id="fineStep" class="in num" type="number" value="2" min="1"></label></div>
+        <div class="row"><button class="btn sm" data-snap="br">↘ reset</button><button class="btn sm" data-snap="tl">↖</button><button class="btn sm" data-snap="tr">↗</button><button class="btn sm" data-snap="bl">↙</button><button class="btn sm" data-snap="c">◎</button></div>
+      </div>
+    </div>
+
+    <div class="glass card">
+      <div class="head"><h2>Environment</h2></div>
+      <div class="row segs" id="seasons">
+        <button data-s="0" class="seg">🌸</button><button data-s="1" class="seg">☀️</button><button data-s="2" class="seg">🍂</button><button data-s="3" class="seg">❄️</button>
+        <label class="chk"><input type="checkbox" id="lockSeason"> lock</label>
+      </div>
+      <div class="prog"><i id="seasonBar"></i></div>
+      <div class="row"><input id="hour" type="range" min="0" max="24" step="0.05" class="grow"><span id="hourLbl" class="mono">--:--</span></div>
+      <div class="row">
+        <button id="pause" class="btn sm grow">❚❚ pause</button>
+        <select id="speed" class="in sel"><option value="1">1×</option><option value="2">2×</option><option value="5">5×</option><option value="20">20×</option><option value="60">60×</option></select>
+      </div>
+      <div class="row">
+        <button class="btn sm grow" data-hr="6">dawn</button><button data-hr="12" class="btn sm grow">noon</button><button class="btn sm grow" data-hr="18.2">dusk</button><button class="btn sm grow" data-hr="0">night</button>
+      </div>
+      <div class="row segs" id="rain">
+        <button data-r="auto" class="seg">auto</button><button data-r="on" class="seg">rain</button><button data-r="off" class="seg">clear</button>
+        <button id="reroll" class="btn sm" title="Toggle auto rain now">🎲</button>
+      </div>
+      <div class="row"><span class="mini">intensity</span><input id="intensity" type="range" min="0.05" max="1" step="0.01" class="grow"></div>
+      <div class="row"><button id="mute" class="btn sm">🔊</button><input id="vol" type="range" min="0" max="1" step="0.01" class="grow"><label class="chk"><input type="checkbox" id="hud"> hud</label></div>
+    </div>
+
+    <div class="glass card">
+      <div class="head"><h2>Status</h2></div>
+      <div id="status" class="status"></div>
+    </div>
+  </aside>
+</main>
+
+<div id="modal" class="modal" hidden>
+  <div class="glass sheet">
+    <div class="head">
+      <h2>Screen <span id="scrLbl" class="mono dim"></span></h2>
+      <span class="mini dim">drag to move · corner to resize · arrows (+shift fast, +alt resize)</span>
+      <button id="closeScreen" class="btn ghost">✕</button>
+    </div>
+    <div id="stageWrap"><div id="stage"></div></div>
+  </div>
+</div>
+
+<script src="/shared/marked.min.js"></script>
+<script src="/shared/purify.min.js"></script>
+<script src="/shared/link.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

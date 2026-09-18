@@ -1,0 +1,7 @@
+/* IBM Plex Mono is the upstream of Blex Mono. A locally installed Blex Mono (Nerd Font) wins; otherwise the bundled copy is used. */
+@font-face{font-family:"Blex Mono Local";src:local("BlexMono Nerd Font"),local("BlexMono Nerd Font Mono"),local("BlexMonoNerdFont-Regular"),local("Blex Mono"),url(fonts/plexmono-400.woff2) format("woff2");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Blex Mono Local";src:local("BlexMono Nerd Font Light"),local("BlexMonoNerdFont-Light"),url(fonts/plexmono-300.woff2) format("woff2");font-weight:300;font-style:normal;font-display:swap}
+@font-face{font-family:"Blex Mono Local";src:local("BlexMono Nerd Font Medium"),local("BlexMonoNerdFont-Medium"),url(fonts/plexmono-500.woff2) format("woff2");font-weight:500;font-style:normal;font-display:swap}
+@font-face{font-family:"Blex Mono Local";src:local("BlexMono Nerd Font SemiBold"),local("BlexMonoNerdFont-SemiBold"),url(fonts/plexmono-600.woff2) format("woff2");font-weight:600 700;font-style:normal;font-display:swap}
+@font-face{font-family:"Blex Mono Local";src:local("BlexMono Nerd Font Italic"),local("BlexMonoNerdFont-Italic"),url(fonts/plexmono-400i.woff2) format("woff2");font-weight:400;font-style:italic;font-display:swap}
+:root{--mono:"Blex Mono Local","BlexMono Nerd Font","IBM Plex Mono",ui-monospace,Menlo,monospace}

@@ -1,0 +1,4 @@
+/monitor
+/data/
+/certs/*.pem
+.DS_Store
