@@ -1,228 +1,239 @@
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
-const notes = new Map();
-let sel = null, env = null, clients = [], view = "split";
-const SEASON = ["🌸 spring", "☀️ summer", "🍂 autumn", "❄️ winter"];
+document.head.appendChild(Object.assign(document.createElement("link"), { rel: "stylesheet", href: FONT_CSS }));
+const items = new Map(), SEASON = ["🌸 spring", "☀️ summer", "🍂 autumn", "❄️ winter"], SCENE_I = { meadow: "🌾", forest: "🌲", mountain: "🏔", beach: "🏖", city: "🏘" }, WX = { clear: "☀ clear", cloudy: "☁ cloudy", rain: "☂ rain", storm: "⛈ storm" };
+let screens = [], env = null, sel = null, scr = localStorage.getItem("selScr"), skew = 0;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), pad = (n) => String(Math.floor(n)).padStart(2, "0");
+const hhmm = (h) => `${pad(h)}:${pad((h % 1) * 60)}`, mmss = (ms) => { const s = Math.max(0, ms) / 1000; return s >= 3600 ? `${s / 3600 | 0}h${pad(s / 60 % 60)}m` : `${s / 60 | 0}m${pad(s % 60)}s`; };
+const dur = (ms) => { const s = Math.max(0, ms) / 1000, h = s / 3600 | 0; return (h ? h + ":" : "") + pad(s / 60 % 60) + ":" + pad(s % 60); };
+const throttle = (fn, ms) => { let t = 0, a; return (...x) => { a = x; if (!t) t = setTimeout(() => { t = 0; fn(...a); }, ms); }; };
 
 const link = new Link("control", {
   status: (s) => { const c = $("#conn"); c.className = "pill " + (s === "open" ? "on-link" : "off-link"); c.lastChild.textContent = s; },
-  message: onMsg,
-});
-
-function onMsg(m) {
-  switch (m.type) {
-    case "welcome":
-      notes.clear(); m.notes.forEach((n) => notes.set(n.id, n));
-      clients = m.clients; setEnv(m.env); renderAll(); break;
-    case "note.upsert": {
-      const mine = m.by === link.id;
-      notes.set(m.note.id, m.note);
-      if (m.created && mine) select(m.note.id);
-      renderList(); renderStage();
-      if (m.note.id === sel) fillEditor(mine); break;
+  message(m) {
+    switch (m.type) {
+      case "welcome": items.clear(); m.items.forEach((i) => items.set(i.id, i)); screens = m.screens; pickScreen(); setEnv(m.env); renderAll(); break;
+      case "item.upsert": { const mine = m.by === link.id, fresh = !items.has(m.item.id); items.set(m.item.id, m.item); if (fresh && mine) select(m.item.id); renderList(); renderStage(); if (m.item.id === sel) fillEditor(); break; }
+      case "item.remove": items.delete(m.id); if (sel === m.id) select(null); renderList(); renderStage(); break;
+      case "env": setEnv(m.env); break;
+      case "screens": screens = m.screens; pickScreen(); renderScreens(); renderList(); fillPos(); renderStage(); renderStatus(); break;
     }
-    case "note.remove":
-      notes.delete(m.id); if (sel === m.id) select(null); renderList(); renderStage(); break;
-    case "env": setEnv(m.env); break;
-    case "clients": clients = m.clients; renderStatus(); renderStage(); break;
-  }
-}
-
-// ── monitor screen ──
-const monitors = () => clients.filter((c) => c.role === "monitor" && c.screen);
-const screen = () => { const m = monitors(); return m.length ? m[m.length - 1].screen : { w: 1920, h: 1080, dpr: 1 }; };
-
-// ── notes list / editor ──
-const cur = () => notes.get(sel);
+  },
+});
 const send = (m) => link.send(m);
-const patch = (id, p) => { const n = notes.get(id); if (n) Object.assign(n, p); send({ type: "note.update", id, patch: p }); };
+const setE = (p) => send({ type: "env.set", patch: p });
+const cur = () => items.get(sel), curScr = () => screens.find((s) => s.id === scr);
+const size = () => { const s = curScr(); return s && s.w ? { w: s.w, h: s.h } : { w: 1920, h: 1080 }; };
+const lay = (it) => it && it.layouts && it.layouts[scr];
+const renderAll = () => { renderScreens(); renderList(); fillEditor(); renderStatus(); renderStage(); };
 
-function renderAll() { renderList(); fillEditor(false); renderStatus(); renderStage(); }
+// ── screens ──
+function pickScreen() { if (!screens.some((s) => s.id === scr)) scr = (screens.find((s) => s.online) || screens[0] || {}).id || null; }
+function renderScreens() {
+  const ul = $("#screens"); ul.innerHTML = "";
+  if (!screens.length) ul.innerHTML = `<li class="dim">No screens yet — open /monitor/ on a device</li>`;
+  for (const s of screens) {
+    const li = document.createElement("li"); li.className = s.id === scr ? "sel" : "";
+    const bat = s.battery ? ` ${s.battery.charging ? "⚡" : "🔋"}${Math.round(s.battery.level * 100)}%` : "";
+    li.innerHTML = `<i class="dot ${s.online ? "on" : ""}"></i><span class="t"></span><span class="meta">${SCENE_I[s.scene] || ""}${bat}</span>`;
+    li.querySelector(".t").textContent = s.name;
+    li.onclick = () => { scr = s.id; localStorage.setItem("selScr", scr); renderAll(); };
+    ul.appendChild(li);
+  }
+  const s = curScr(); $("#scrEdit").hidden = !s; if (!s) return;
+  if (document.activeElement !== $("#scrName")) $("#scrName").value = s.name;
+  $("#scrScene").value = s.scene; $("#scrFps").value = String(s.fpsCap || 0); $("#scrDel").disabled = s.online;
+  $("#layScr").textContent = "· " + s.name;
+}
+const scrUpd = (p) => scr && send({ type: "screen.update", screen: scr, patch: p });
+$("#scrName").onchange = (e) => scrUpd({ name: e.target.value.trim() });
+$("#scrScene").onchange = (e) => scrUpd({ scene: e.target.value });
+$("#scrFps").onchange = (e) => scrUpd({ fpsCap: +e.target.value });
+$("#scrDel").onclick = () => { const s = curScr(); if (s && !s.online && confirm(`Forget screen "${s.name}"?`)) send({ type: "screen.delete", screen: s.id }); };
+$("#scrLink").onclick = () => { const u = `${location.origin}/monitor/?screen=${encodeURIComponent(scr)}`; (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(() => ($("#scrLink").textContent = "✓"), () => prompt("Monitor link", u)); setTimeout(() => ($("#scrLink").textContent = "🔗"), 1500); };
+$("#newScreen").onclick = () => window.open(`/monitor/?screen=screen-${Math.random().toString(36).slice(2, 6)}`, "_blank");
 
+// ── items list & editor ──
+const patchItem = (id, p) => { const it = items.get(id); if (!it) return; for (const k in p) k === "clock" ? Object.assign(it.clock, p.clock) : (it[k] = p[k]); send({ type: "item.update", id, patch: p }); };
+const setLay = (id, p, screen = scr) => { const it = items.get(id); if (!it || !screen) return; if (screen === "*") for (const k in it.layouts) Object.assign(it.layouts[k], p); else Object.assign(it.layouts[screen] || {}, p); send({ type: "layout.set", id, screen, patch: p }); };
 function renderList() {
   const ul = $("#list"); ul.innerHTML = "";
-  [...notes.values()].sort((a, b) => a.created - b.created).forEach((n) => {
-    const li = document.createElement("li");
-    li.className = (n.id === sel ? "sel " : "") + (n.enabled ? "" : "off");
-    li.innerHTML = `<label class="sw"><input type="checkbox" ${n.enabled ? "checked" : ""}><span></span></label><span></span>`;
-    li.lastChild.textContent = n.title || "Untitled";
-    li.onclick = (e) => { if (!e.target.closest(".sw")) select(n.id); };
-    li.querySelector("input").onchange = (e) => { patch(n.id, { enabled: e.target.checked }); renderList(); renderStage(); if (n.id === sel) $("#enabled").checked = e.target.checked; };
+  [...items.values()].sort((a, b) => a.created - b.created).forEach((it) => {
+    const L = lay(it), li = document.createElement("li");
+    li.className = (it.id === sel ? "sel " : "") + (L && L.on ? "" : "off");
+    li.innerHTML = `<span>${it.kind === "clock" ? { clock: "🕰", timer: "⏱", countdown: "⏳", alarm: "⏰" }[it.clock.mode] : "📝"}</span><span class="t"></span><span class="meta"></span><label class="sw"><input type="checkbox" ${L && L.on ? "checked" : ""} ${L ? "" : "disabled"}><span></span></label>`;
+    li.querySelector(".t").textContent = it.title || "Untitled";
+    li.onclick = (e) => { if (!e.target.closest(".sw")) select(it.id); };
+    li.querySelector("input").onchange = (e) => { setLay(it.id, { on: e.target.checked }); renderList(); renderStage(); if (it.id === sel) $("#enabled").checked = e.target.checked; };
     ul.appendChild(li);
   });
 }
-
-function select(id) {
-  sel = id; renderList(); fillEditor(false); renderStage();
+function select(id) { sel = id; renderList(); fillEditor(); renderStage(); }
+function fillEditor() {
+  const it = cur(); $("#editor").hidden = !it; $("#empty").hidden = !!it; fillPos(); if (!it) return;
+  const set = (el, v) => { if (document.activeElement !== el) el.value = v; };
+  set($("#title"), it.title); set($("#fs"), it.fontSize); $("#font").value = it.font || "blex";
+  const L = lay(it); $("#enabled").checked = !!(L && L.on); $("#enabled").disabled = !L;
+  const clock = it.kind === "clock"; $("#noteEd").hidden = clock; $("#clockEd").hidden = !clock;
+  if (!clock) { set($("#content"), it.content); $("#preview").innerHTML = renderMarkdown(it.content); return; }
+  const c = it.clock;
+  $$("#cMode .seg").forEach((b) => b.classList.toggle("on", b.dataset.v === c.mode));
+  $$("#cDisp .seg").forEach((b) => b.classList.toggle("on", b.dataset.v === c.display));
+  $$("#cStyle .seg").forEach((b) => b.classList.toggle("on", b.dataset.v === (c.style || "glass")));
+  $("#cDur").hidden = c.mode !== "countdown"; $("#cAlarm").hidden = c.mode !== "alarm"; $("#cCtl").hidden = c.mode === "clock";
+  $$("#cCtl [data-act=start],#cCtl [data-act=pause],#cCtl [data-act=reset]").forEach((b) => (b.hidden = c.mode === "alarm"));
+  $("#dismiss").hidden = !c.ringing;
+  const d = c.duration; $$("#cDur input").forEach((i) => set(i, Math.floor(d / +i.dataset.u) % (i.dataset.u === "3600000" ? 1000 : 60)));
+  set($("#alarmAt"), c.alarm); $("#armed").checked = c.running;
+  liveClock();
 }
-
-function fillEditor(fromSelf) {
-  const n = cur();
-  $("#editor").hidden = !n; $("#empty").hidden = !!n;
-  $("#posBox").classList.toggle("dis", !n);
-  if (!n) return;
-  const set = (el, v) => { if (!(fromSelf && document.activeElement === el) && document.activeElement !== el) el.value = v; };
-  set($("#title"), n.title); set($("#content"), n.content); set($("#fs"), n.fontSize);
-  $("#enabled").checked = n.enabled;
-  $("#preview").innerHTML = renderMarkdown(n.content);
-  fillPos();
+function liveClock() {
+  const it = cur(); if (!it || it.kind !== "clock") return;
+  const c = it.clock, now = Date.now() + skew, el = c.acc + (c.running ? now - c.startAt : 0);
+  const [big, sub] = c.ringing ? ["⏰", "ringing — press stop"] : c.mode === "timer" ? [dur(el), c.running ? "running" : "paused"] : c.mode === "countdown" ? [dur(c.duration - el + (c.running ? 999 : 0)), c.running ? "running" : "paused"]
+    : c.mode === "alarm" ? [c.alarm, c.running ? "armed" : "off"] : [new Date(now).toLocaleTimeString(), "local time on monitor"];
+  const v = `${big}<small>${sub}</small>`; if ($("#cLive")._v !== v) $("#cLive").innerHTML = $("#cLive")._v = v;
+  $("#dismiss").hidden = !c.ringing;
 }
+setInterval(liveClock, 250);
 
-function fillPos() {
-  const n = cur(); if (!n) return; const s = screen();
-  const v = { x: n.x * s.w, y: n.y * s.h, w: n.w * s.w, h: n.h * s.h };
-  $$(".grid4 input").forEach((i) => { if (document.activeElement !== i) i.value = Math.round(v[i.dataset.k]); });
-}
-
-const throttle = (fn, ms) => { let t = 0, last; return (...a) => { last = a; if (!t) t = setTimeout(() => { t = 0; fn(...last); }, ms); }; };
-const pushText = throttle(() => { const n = cur(); if (n) patch(n.id, { title: $("#title").value, content: $("#content").value }); }, 120);
-
-$("#title").oninput = () => { pushText(); const n = cur(); if (n) { n.title = $("#title").value; renderList(); } };
+$("#font").innerHTML = Object.entries(FONTS).map(([k, [n]]) => `<option value="${k}">${n}</option>`).join("");
+$("#cStyle").innerHTML = CLOCK_STYLES.map((s) => `<button class="seg" data-v="${s}">${s}</button>`).join("");
+const pushText = throttle(() => { const it = cur(); if (it) patchItem(it.id, { title: $("#title").value, ...(it.kind === "note" ? { content: $("#content").value } : {}) }); }, 120);
+$("#title").oninput = () => { pushText(); const it = cur(); if (it) { it.title = $("#title").value; renderList(); } };
 $("#content").oninput = () => { pushText(); $("#preview").innerHTML = renderMarkdown($("#content").value); };
-$("#content").onkeydown = (e) => {
-  if (e.key !== "Tab") return;
-  e.preventDefault(); const t = e.target, s = t.selectionStart;
-  t.setRangeText("  ", s, t.selectionEnd, "end"); pushText();
-};
-$("#fs").onchange = (e) => sel && patch(sel, { fontSize: +e.target.value });
-$("#enabled").onchange = (e) => { if (sel) { patch(sel, { enabled: e.target.checked }); renderList(); renderStage(); } };
-$("#del").onclick = () => { const n = cur(); if (n && confirm(`Delete "${n.title}"?`)) send({ type: "note.delete", id: n.id }); };
-$("#newNote").onclick = () => send({ type: "note.create", title: "Note " + (notes.size + 1), content: "# Hello\n\nWrite **markdown** here." });
-$$(".tabs .seg").forEach((b) => b.onclick = () => {
-  view = b.dataset.view; $$(".tabs .seg").forEach((x) => x.classList.toggle("on", x === b)); $("#panes").className = "panes " + view;
-});
+$("#content").onkeydown = (e) => { if (e.key !== "Tab") return; e.preventDefault(); const t = e.target; t.setRangeText("  ", t.selectionStart, t.selectionEnd, "end"); pushText(); };
+$("#fs").onchange = (e) => sel && patchItem(sel, { fontSize: +e.target.value });
+$("#font").onchange = (e) => sel && patchItem(sel, { font: e.target.value });
+$("#enabled").onchange = (e) => { if (sel) { setLay(sel, { on: e.target.checked }); renderList(); renderStage(); } };
+$("#del").onclick = () => { const it = cur(); if (it && confirm(`Delete "${it.title}"?`)) send({ type: "item.delete", id: it.id }); };
+$("#newNote").onclick = () => send({ type: "item.create", kind: "note" });
+$("#newClock").onclick = () => send({ type: "item.create", kind: "clock" });
+$$(".tabs .seg").forEach((b) => (b.onclick = () => { $$(".tabs .seg").forEach((x) => x.classList.toggle("on", x === b)); $("#panes").className = "panes " + b.dataset.view; }));
+const clk = (p) => { if (sel) { patchItem(sel, { clock: p }); fillEditor(); renderList(); } };
+$$("#cMode .seg").forEach((b) => (b.onclick = () => clk({ mode: b.dataset.v, running: false, acc: 0, ringing: false })));
+$$("#cDisp .seg").forEach((b) => (b.onclick = () => clk({ display: b.dataset.v })));
+$("#cStyle").onclick = (e) => { const b = e.target.closest(".seg"); if (b) clk({ style: b.dataset.v }); };
+$$("#cDur input").forEach((i) => (i.onchange = () => clk({ duration: Math.max(1000, $$("#cDur input").reduce((a, x) => a + (+x.value || 0) * +x.dataset.u, 0)), acc: 0, running: false })));
+$("#alarmAt").onchange = (e) => clk({ alarm: e.target.value, fired: "" });
+$("#armed").onchange = (e) => sel && send({ type: "clock.act", id: sel, act: e.target.checked ? "start" : "pause" });
+$$("#cCtl [data-act]").forEach((b) => (b.onclick = () => sel && send({ type: "clock.act", id: sel, act: b.dataset.act })));
 
-// ── position ──
+// ── layout on selected screen ──
+function fillPos() {
+  const L = lay(cur()); $("#posBox").classList.toggle("dis", !L); if (!L) return;
+  const s = size(), v = { x: L.x * s.w, y: L.y * s.h, w: L.w * s.w, h: L.h * s.h };
+  $$(".grid4 input[data-k]").forEach((i) => { if (document.activeElement !== i) i.value = Math.round(v[i.dataset.k]); });
+}
+function setGeom(p) {
+  const it = cur(), L = lay(it); if (!L) return;
+  const g = { x: L.x, y: L.y, w: L.w, h: L.h, ...p };
+  g.w = clamp(g.w, .02, 1); g.h = clamp(g.h, .02, 1); g.x = clamp(g.x, 0, 1 - g.w); g.y = clamp(g.y, 0, 1 - g.h);
+  setLay(it.id, g); fillPos(); renderStage();
+}
 function move(dx, dy, fast, resize) {
-  const n = cur(); if (!n) return; const s = screen();
-  const st = +(fast ? $("#fastStep").value : $("#fineStep").value) || 1;
-  const p = resize ? { w: n.w + dx * st / s.w, h: n.h + dy * st / s.h } : { x: n.x + dx * st / s.w, y: n.y + dy * st / s.h };
-  setGeom(n, p);
+  const L = lay(cur()); if (!L) return; const s = size(), st = +(fast ? $("#fastStep").value : $("#fineStep").value) || 1;
+  setGeom(resize ? { w: L.w + dx * st / s.w, h: L.h + dy * st / s.h } : { x: L.x + dx * st / s.w, y: L.y + dy * st / s.h });
 }
-function setGeom(n, p) {
-  const g = { x: n.x, y: n.y, w: n.w, h: n.h, ...p };
-  g.w = clamp(g.w, 0.02, 1); g.h = clamp(g.h, 0.02, 1);
-  g.x = clamp(g.x, 0, 1 - g.w); g.y = clamp(g.y, 0, 1 - g.h);
-  patch(n.id, g); fillPos(); renderStage();
-}
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-
-$$("[data-mv]").forEach((b) => {
-  const [dx, dy, f] = b.dataset.mv.split(",").map(Number);
-  let rep;
-  const stop = () => { clearTimeout(rep); clearInterval(rep); };
-  b.onpointerdown = () => { move(dx, dy, f); rep = setTimeout(() => (rep = setInterval(() => move(dx, dy, f), 60)), 350); };
-  b.onpointerup = b.onpointerleave = b.onpointercancel = stop;
-});
-$$(".grid4 input").forEach((i) => i.onchange = () => {
-  const n = cur(); if (!n) return; const s = screen(), k = i.dataset.k;
-  setGeom(n, { [k]: +i.value / (k === "x" || k === "w" ? s.w : s.h) });
-});
-$$("[data-snap]").forEach((b) => b.onclick = () => {
-  const n = cur(); if (!n) return; const mx = 0.015, my = 0.025;
-  const pos = { br: [1 - n.w - mx, 1 - n.h - my], tl: [mx, my], tr: [1 - n.w - mx, my], bl: [mx, 1 - n.h - my], c: [(1 - n.w) / 2, (1 - n.h) / 2] }[b.dataset.snap];
-  setGeom(n, { x: pos[0], y: pos[1] });
-});
+const hold = (b, fn) => { let r; const stop = () => { clearTimeout(r); clearInterval(r); }; b.onpointerdown = (e) => { e.preventDefault(); fn(); r = setTimeout(() => (r = setInterval(fn, 60)), 350); }; b.onpointerup = b.onpointerleave = b.onpointercancel = stop; };
+$$("[data-mv]").forEach((b) => { const [dx, dy, f] = b.dataset.mv.split(",").map(Number); hold(b, () => move(dx, dy, f)); });
+$$("[data-rz]").forEach((b) => { const [dx, dy] = b.dataset.rz.split(",").map(Number); hold(b, () => move(dx, dy, 1, 1)); });
+$$(".grid4 input[data-k]").forEach((i) => (i.onchange = () => { const s = size(), k = i.dataset.k; setGeom({ [k]: +i.value / (k === "x" || k === "w" ? s.w : s.h) }); }));
+$$("[data-snap]").forEach((b) => (b.onclick = () => { const L = lay(cur()); if (!L) return; const mx = .015, my = .025; setGeom({ br: { x: 1 - L.w - mx, y: 1 - L.h - my }, tl: { x: mx, y: my }, tr: { x: 1 - L.w - mx, y: my }, bl: { x: mx, y: 1 - L.h - my }, c: { x: (1 - L.w) / 2, y: (1 - L.h) / 2 } }[b.dataset.snap]); }));
+$("#toAll").onclick = () => { const it = cur(), L = lay(it); if (L && confirm("Copy this position/size to every screen?")) setLay(it.id, { x: L.x, y: L.y, w: L.w, h: L.h, on: L.on }, "*"); };
 
 // ── virtual screen ──
 $("#openScreen").onclick = () => { $("#modal").hidden = false; renderStage(); };
 $("#closeScreen").onclick = () => ($("#modal").hidden = true);
 $("#modal").onclick = (e) => { if (e.target.id === "modal") $("#modal").hidden = true; };
-window.addEventListener("resize", renderStage);
+addEventListener("resize", () => renderStage());
 document.addEventListener("keydown", (e) => {
-  if ($("#modal").hidden) return;
-  if (e.key === "Escape") return ($("#modal").hidden = true);
-  const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
-  if (d) { e.preventDefault(); move(d[0], d[1], e.shiftKey, e.altKey); }
+  if ($("#modal").hidden) return; if (e.key === "Escape") return ($("#modal").hidden = true);
+  const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key]; if (d) { e.preventDefault(); move(d[0], d[1], e.shiftKey, e.altKey); }
 });
-
 let drag = null;
+const place = (d, L) => Object.assign(d.style, { left: L.x * 100 + "%", top: L.y * 100 + "%", width: L.w * 100 + "%", height: L.h * 100 + "%" });
 function renderStage() {
   if ($("#modal").hidden || drag) return;
-  const s = screen(), wrap = $("#stageWrap"), st = $("#stage");
-  const k = Math.min(wrap.clientWidth / s.w, wrap.clientHeight / s.h);
+  const s = size(), wrap = $("#stageWrap"), st = $("#stage"), k = Math.min(wrap.clientWidth / s.w, wrap.clientHeight / s.h);
   st.style.width = s.w * k + "px"; st.style.height = s.h * k + "px";
-  $("#scrLbl").textContent = `${s.w}×${s.h}` + (monitors().length ? "" : " (no monitor, default)");
+  const sc = curScr(); $("#scrLbl").textContent = `${sc ? sc.name + " · " : ""}${s.w}×${s.h}${sc && sc.w ? "" : " (default)"}`;
   st.innerHTML = "";
-  [...notes.values()].sort((a, b) => a.z - b.z).forEach((n) => {
-    const d = document.createElement("div");
-    d.className = "vn" + (n.enabled ? "" : " off") + (n.id === sel ? " sel" : "");
-    d.dataset.id = n.id; d.textContent = n.title;
-    d.appendChild(Object.assign(document.createElement("i"), { className: "rz" }));
-    place(d, n); st.appendChild(d);
+  [...items.values()].sort((a, b) => a.z - b.z).forEach((it) => {
+    const L = lay(it); if (!L) return;
+    const d = document.createElement("div"); d.className = "vn" + (L.on ? "" : " off") + (it.id === sel ? " sel" : ""); d.dataset.id = it.id;
+    d.textContent = (it.kind === "clock" ? "⏰ " : "📝 ") + it.title; d.appendChild(Object.assign(document.createElement("i"), { className: "rz" }));
+    place(d, L); st.appendChild(d);
   });
 }
-const place = (d, n) => Object.assign(d.style, { left: n.x * 100 + "%", top: n.y * 100 + "%", width: n.w * 100 + "%", height: n.h * 100 + "%" });
-
 $("#stage").addEventListener("pointerdown", (e) => {
   const d = e.target.closest(".vn"); if (!d) return;
-  const n = notes.get(d.dataset.id); if (sel !== n.id) { sel = n.id; renderList(); fillEditor(false); $$(".vn").forEach((x) => x.classList.toggle("sel", x === d)); }
-  send({ type: "note.front", id: n.id });
-  const r = $("#stage").getBoundingClientRect();
-  drag = { d, n, r, sx: e.clientX, sy: e.clientY, o: { ...n }, rz: e.target.classList.contains("rz") };
-  d.setPointerCapture(e.pointerId); d.style.cursor = "grabbing"; d.style.zIndex = 999;
+  const it = items.get(d.dataset.id), L = lay(it); if (sel !== it.id) { sel = it.id; renderList(); fillEditor(); $$(".vn").forEach((x) => x.classList.toggle("sel", x === d)); }
+  send({ type: "item.front", id: it.id });
+  drag = { d, it, L, r: $("#stage").getBoundingClientRect(), sx: e.clientX, sy: e.clientY, o: { ...L }, rz: e.target.classList.contains("rz") };
+  d.setPointerCapture(e.pointerId); d.style.zIndex = 999;
 });
+const sendGeom = throttle((id, g) => send({ type: "layout.set", id, screen: scr, patch: g }), 30);
 $("#stage").addEventListener("pointermove", (e) => {
-  if (!drag) return;
-  const { n, r, o } = drag, dx = (e.clientX - drag.sx) / r.width, dy = (e.clientY - drag.sy) / r.height;
-  const g = drag.rz ? { w: clamp(o.w + dx, 0.02, 1 - o.x), h: clamp(o.h + dy, 0.02, 1 - o.y) } : { x: clamp(o.x + dx, 0, 1 - o.w), y: clamp(o.y + dy, 0, 1 - o.h) };
-  Object.assign(n, g); place(drag.d, n); fillPos(); sendGeom(n.id, g);
+  if (!drag) return; const { L, r, o } = drag, dx = (e.clientX - drag.sx) / r.width, dy = (e.clientY - drag.sy) / r.height;
+  const g = drag.rz ? { w: clamp(o.w + dx, .02, 1 - o.x), h: clamp(o.h + dy, .02, 1 - o.y) } : { x: clamp(o.x + dx, 0, 1 - o.w), y: clamp(o.y + dy, 0, 1 - o.h) };
+  Object.assign(L, g); place(drag.d, L); fillPos(); sendGeom(drag.it.id, g);
 });
-const sendGeom = throttle((id, g) => send({ type: "note.update", id, patch: g }), 30);
-const endDrag = () => { if (!drag) return; const n = drag.n; drag = null; send({ type: "note.update", id: n.id, patch: { x: n.x, y: n.y, w: n.w, h: n.h } }); renderStage(); };
-$("#stage").addEventListener("pointerup", endDrag);
-$("#stage").addEventListener("pointercancel", endDrag);
+const endDrag = () => { if (!drag) return; const { it, L } = drag; drag = null; send({ type: "layout.set", id: it.id, screen: scr, patch: { x: L.x, y: L.y, w: L.w, h: L.h } }); renderStage(); };
+$("#stage").addEventListener("pointerup", endDrag); $("#stage").addEventListener("pointercancel", endDrag);
 
 // ── environment ──
-const setE = (p) => send({ type: "env.set", patch: p });
-const hhmm = (h) => `${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor((h % 1) * 60)).padStart(2, "0")}`;
-const mmss = (ms) => `${Math.floor(ms / 60000)}m${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}s`;
+const knobs = {};
+$$(".knob").forEach((el) => {
+  const k = el.dataset.k, def = () => (env && env.knobDefs[k]) ?? .5;
+  el.innerHTML = `<div class="kn" tabindex="0"><svg viewBox="0 0 40 40"><circle class="kt" cx="20" cy="20" r="16" pathLength="100" stroke-dasharray="75 100"/><circle class="kv" cx="20" cy="20" r="16" pathLength="100" stroke-dasharray="0 100"/></svg><span class="kval"></span></div><span>${el.dataset.l}</span><button class="kr" title="reset to default">↺</button>`;
+  const kn = el.firstChild, push = throttle((v) => setE({ knobs: { [k]: v } }), 80); let v = .5, dr = null;
+  const set = (nv, p) => { v = clamp(nv, 0, 1); el.querySelector(".kv").setAttribute("stroke-dasharray", `${v * 75} 100`); el.querySelector(".kval").textContent = Math.round(v * 100); el.querySelector(".kr").classList.toggle("def", Math.abs(v - def()) < .005); if (p) push(v); };
+  kn.onpointerdown = (e) => { dr = { x: e.clientX, y: e.clientY, v }; kn.setPointerCapture(e.pointerId); };
+  kn.onpointermove = (e) => dr && set(dr.v + (dr.y - e.clientY + e.clientX - dr.x) / 160, true);
+  kn.onpointerup = kn.onpointercancel = () => (dr = null);
+  kn.onwheel = (e) => { e.preventDefault(); set(v - Math.sign(e.deltaY) * .02, true); };
+  kn.onkeydown = (e) => { const d = { ArrowUp: .02, ArrowRight: .02, ArrowDown: -.02, ArrowLeft: -.02 }[e.key]; if (d) { e.preventDefault(); set(v + d, true); } };
+  kn.ondblclick = el.querySelector(".kr").onclick = () => set(def(), true);
+  knobs[k] = (x) => !dr && set(x, false);
+});
 
 function setEnv(e) {
-  env = e;
-  $("#stClock").textContent = `${e.isDay ? "☀" : "☾"} ${hhmm(e.hour)}${e.timePaused ? " ❚❚" : ""}`;
-  $("#stSeason").textContent = SEASON[e.season] + (e.seasonLocked ? " 🔒" : "");
-  $("#stRain").textContent = e.raining ? `${e.season === 3 ? "❄ snow" : "☔ rain"} ${Math.round(e.intensity * 100)}%` : "clear";
-  $$("#seasons .seg").forEach((b) => b.classList.toggle("on", +b.dataset.s === e.season));
-  $("#lockSeason").checked = e.seasonLocked;
+  env = e; skew = e.serverTime - Date.now(); const E = e.env, act = document.activeElement;
+  $("#stClock").textContent = `${e.isDay ? "☀" : "☾"} ${hhmm(e.hour)}${E.paused ? " ❚❚" : ""}`;
+  $("#stSeason").textContent = SEASON[e.season] + (E.seasonLocked ? " 🔒" : "");
+  $("#stWx").textContent = (WX[e.weather.state] || "").replace("rain", e.season === 3 ? "snow" : "rain") + (E.weatherMode === "auto" ? "" : " 📌");
+  if (act !== $("#hour")) $("#hour").value = e.hour; $("#hourLbl").textContent = hhmm(e.hour);
+  $("#pause").textContent = E.paused ? "▶ play" : "❚❚ pause"; $("#pause").classList.toggle("on", E.paused); $("#speed").value = String(E.speed);
+  if (act !== $("#dayMin")) $("#dayMin").value = E.dayMin; if (act !== $("#nightMin")) $("#nightMin").value = E.nightMin;
+  $$("#seasons .seg").forEach((b) => b.classList.toggle("on", +b.dataset.s === e.season)); $("#lockSeason").checked = E.seasonLocked;
   $("#seasonBar").style.width = e.seasonProgress * 100 + "%";
-  if (document.activeElement !== $("#hour")) $("#hour").value = e.hour;
-  $("#hourLbl").textContent = hhmm(e.hour);
-  $("#pause").textContent = e.timePaused ? "▶ play" : "❚❚ pause"; $("#pause").classList.toggle("on", e.timePaused);
-  $("#speed").value = String(e.speed);
-  $$("#rain .seg").forEach((b) => b.classList.toggle("on", b.dataset.r === e.rainMode));
-  if (document.activeElement !== $("#intensity")) $("#intensity").value = e.rainMode === "on" ? e.rainIntensity : e.intensity || e.rainIntensity;
-  $("#intensity").disabled = e.rainMode !== "on";
-  if (document.activeElement !== $("#vol")) $("#vol").value = e.volume;
-  $("#mute").textContent = e.muted ? "🔇" : "🔊";
-  $("#hud").checked = e.showHud;
+  $$("[data-sl]").forEach((i) => act !== i && (i.value = E.seasonMin[+i.dataset.sl]));
+  $$("#weather .seg").forEach((b) => b.classList.toggle("on", b.dataset.w === E.weatherMode));
+  for (const k in knobs) knobs[k](E.knobs[k] ?? .5);
+  $("#mute").textContent = E.muted ? "🔇 muted" : "🔊 sound"; $("#hud").checked = E.showHud;
   renderStatus();
 }
-
-$$("#seasons .seg").forEach((b) => b.onclick = () => setE({ season: +b.dataset.s }));
-$("#lockSeason").onchange = (e) => setE({ seasonLocked: e.target.checked });
-$("#hour").oninput = throttle((e) => setE({ hour: +$("#hour").value }), 60);
-$$("[data-hr]").forEach((b) => b.onclick = () => setE({ hour: +b.dataset.hr }));
-$("#pause").onclick = () => env && setE({ timePaused: !env.timePaused });
+$("#hour").oninput = throttle(() => setE({ hour: +$("#hour").value }), 60);
+$$("[data-hr]").forEach((b) => (b.onclick = () => setE({ hour: +b.dataset.hr })));
+$("#pause").onclick = () => env && setE({ paused: !env.env.paused });
 $("#speed").onchange = (e) => setE({ speed: +e.target.value });
-$$("#rain .seg").forEach((b) => b.onclick = () => setE({ rainMode: b.dataset.r }));
-$("#reroll").onclick = () => setE({ rainMode: "auto", rerollRain: true });
-$("#intensity").oninput = throttle(() => setE({ rainIntensity: +$("#intensity").value }), 80);
-$("#vol").oninput = throttle(() => setE({ volume: +$("#vol").value }), 80);
-$("#mute").onclick = () => env && setE({ muted: !env.muted });
+$("#dayMin").onchange = (e) => setE({ dayMin: +e.target.value }); $("#nightMin").onchange = (e) => setE({ nightMin: +e.target.value });
+$$("#seasons .seg").forEach((b) => (b.onclick = () => setE({ season: +b.dataset.s })));
+$("#lockSeason").onchange = (e) => setE({ seasonLocked: e.target.checked });
+$$("[data-sl]").forEach((i) => (i.onchange = () => setE({ seasonMin: $$("[data-sl]").map((x) => +x.value || 60) })));
+$$("#weather .seg").forEach((b) => (b.onclick = () => setE({ weatherMode: b.dataset.w })));
+$("#reroll").onclick = () => setE({ weatherMode: "auto", reroll: true });
+$("#mute").onclick = () => env && setE({ muted: !env.env.muted });
 $("#hud").onchange = (e) => setE({ showHud: e.target.checked });
 
 function renderStatus() {
-  const s = screen(), mons = monitors(), ctl = clients.filter((c) => c.role === "control").length;
-  $("#scr").textContent = mons.length ? `▭ ${s.w}×${s.h}` : "no monitor";
-  if (!env) return;
+  if (!env) return; const E = env.env, on = screens.filter((s) => s.online);
   const rows = [
-    ["season", `${SEASON[env.season]} · ${Math.round(env.seasonProgress * 100)}% · next in ${mmss((1 - env.seasonProgress) * env.seasonLenMs / env.speed)}`],
-    ["time", `${hhmm(env.hour)} ${env.isDay ? "day" : "night"} · ${env.speed}×${env.timePaused ? " paused" : ""}`],
-    ["weather", env.raining ? `${env.season === 3 ? "snow" : "rain"} ${Math.round(env.intensity * 100)}%` : "clear"],
-    ["auto rain", env.rainMode === "auto" ? `${env.autoRaining ? "stops" : "starts"} in ${mmss(env.autoTimerMs / env.speed)}` : "manual"],
-    ["sound", env.muted ? "muted" : Math.round(env.volume * 100) + "%"],
-    ["controls", ctl],
-    ...mons.map((m, i) => [`monitor ${i + 1}`, `${m.screen.w}×${m.screen.h}@${m.screen.dpr}x · ${Math.round(m.fps || 0)}fps · ${m.audio ? "♪" : "no audio"}`]),
+    ["season", `${SEASON[env.season]} ${Math.round(env.seasonProgress * 100)}% · next in ${mmss(env.seasonLeftMs / E.speed)}`],
+    ["time", `${hhmm(env.hour)} ${env.isDay ? "day" : "night"} · ${E.dayMin}+${E.nightMin} min · ${E.speed}×${E.paused ? " paused" : ""}`],
+    ["weather", `${WX[env.weather.state]}${env.weather.intensity ? " " + Math.round(env.weather.intensity * 100) + "%" : ""}${E.weatherMode === "auto" ? " · changes in " + mmss(E.w.left / E.speed) : " · fixed"}`],
+    ["screens", `${on.length} online / ${screens.length}`],
+    ...screens.map((s) => [(s.online ? "● " : "○ ") + s.name, s.online ? `${SCENE_I[s.scene]} ${s.w}×${s.h} · ${Math.round(s.fps)}fps${s.fpsCap ? "/" + s.fpsCap : ""} · ${s.audio ? "♪" : "muted"}${s.battery ? ` · ${s.battery.charging ? "⚡" : ""}${Math.round(s.battery.level * 100)}%` : ""}` : "offline"]),
   ];
-  $("#status").innerHTML = rows.map(([k, v]) => `<div class="it"><span class="dim">${k}</span><span>${escapeHTML(String(v))}</span></div>`).join("");
+  $("#status").innerHTML = rows.map(([k, v]) => `<div class="it"><span class="dim">${escapeHTML(k)}</span><span>${escapeHTML(String(v))}</span></div>`).join("");
 }

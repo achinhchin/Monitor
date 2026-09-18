@@ -5,8 +5,9 @@
   const STALE_MS = 6000;
   const PING_MS = 4000;
 
-  function Link(role, handlers) {
+  function Link(role, handlers, query) {
     this.role = role;
+    this.query = query || "";
     this.h = handlers || {};
     this.ws = null;
     this.id = null;
@@ -21,7 +22,7 @@
 
   Link.prototype.url = function () {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${location.host}/ws?role=${this.role}`;
+    return `${proto}//${location.host}/ws?role=${this.role}${this.query}`;
   };
 
   Link.prototype.clearTimers = function () {

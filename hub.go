@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"sync"
 	"time"
@@ -18,156 +19,138 @@ import (
 )
 
 const (
-	dayLenMs    = 20 * 60 * 1000 // 10 min day + 10 min night
-	seasonLenMs = 60 * 60 * 1000 // one season per hour
-	yearLenMs   = 4 * seasonLenMs
-
 	writeWait   = 10 * time.Second
-	pongWait    = 30 * time.Second // connection dropped if nothing heard for this long
+	pongWait    = 30 * time.Second
 	pingEvery   = 10 * time.Second
 	maxMsgBytes = 1 << 20
-	sendBuffer  = 64
+	sendBuffer  = 128
+	minute      = 60_000.0
 )
 
-var seasonNames = []string{"spring", "summer", "autumn", "winter"}
+var (
+	seasonNames = []string{"spring", "summer", "autumn", "winter"}
+	scenes      = map[string]bool{"meadow": true, "forest": true, "mountain": true, "beach": true, "city": true}
+	knobDefs    = map[string]float64{"animals": .5, "rain": .5, "wind": .5, "volume": .6}
+	screenIDRe  = regexp.MustCompile(`^[\w-]{1,40}$`)
+)
 
-// ───────────────────────────── data model ─────────────────────────────
-
-type Note struct {
-	ID       string  `json:"id"`
-	Title    string  `json:"title"`
-	Content  string  `json:"content"`
-	Enabled  bool    `json:"enabled"`
-	X        float64 `json:"x"` // fractions of the monitor viewport (0..1)
-	Y        float64 `json:"y"`
-	W        float64 `json:"w"`
-	H        float64 `json:"h"`
-	FontSize float64 `json:"fontSize"` // monitor css px
-	Z        int     `json:"z"`
-	Created  int64   `json:"created"`
-	Updated  int64   `json:"updated"`
+type Layout struct {
+	X  float64 `json:"x"`
+	Y  float64 `json:"y"`
+	W  float64 `json:"w"`
+	H  float64 `json:"h"`
+	On bool    `json:"on"`
 }
 
-type NotePatch struct {
-	Title    *string  `json:"title"`
-	Content  *string  `json:"content"`
-	Enabled  *bool    `json:"enabled"`
-	X        *float64 `json:"x"`
-	Y        *float64 `json:"y"`
-	W        *float64 `json:"w"`
-	H        *float64 `json:"h"`
-	FontSize *float64 `json:"fontSize"`
+type Clock struct {
+	Mode     string `json:"mode"`    // clock | timer | countdown | alarm
+	Display  string `json:"display"` // digital | analog
+	Style    string `json:"style"`
+	Duration int64  `json:"duration"` // countdown ms
+	Running  bool   `json:"running"`  // timer/countdown running, alarm armed
+	StartAt  int64  `json:"startAt"`
+	Acc      int64  `json:"acc"`
+	Alarm    string `json:"alarm"` // HH:MM server local time
+	Ringing  bool   `json:"ringing"`
+	RingAt   int64  `json:"ringAt"`
+	Fired    string `json:"fired"`
 }
 
-type Env struct {
-	DayMs         float64 `json:"dayMs"`
-	SeasonMs      float64 `json:"seasonMs"`
-	TimePaused    bool    `json:"timePaused"`
-	Speed         float64 `json:"speed"`
-	SeasonLocked  bool    `json:"seasonLocked"`
-	RainMode      string  `json:"rainMode"` // auto | on | off
-	RainIntensity float64 `json:"rainIntensity"`
-	Volume        float64 `json:"volume"`
-	Muted         bool    `json:"muted"`
-	ShowHud       bool    `json:"showHud"`
-
-	AutoRaining   bool    `json:"autoRaining"`
-	AutoIntensity float64 `json:"autoIntensity"`
-	AutoTimerMs   float64 `json:"autoTimerMs"` // virtual ms until auto rain toggles
+type Item struct {
+	ID       string             `json:"id"`
+	Kind     string             `json:"kind"` // note | clock
+	Title    string             `json:"title"`
+	Content  string             `json:"content"`
+	Font     string             `json:"font"`
+	FontSize float64            `json:"fontSize"`
+	Z        int                `json:"z"`
+	Clock    *Clock             `json:"clock,omitempty"`
+	L        map[string]*Layout `json:"layouts"`
+	Created  int64              `json:"created"`
 }
 
-type EnvPatch struct {
-	TimePaused    *bool    `json:"timePaused"`
-	Speed         *float64 `json:"speed"`
-	SeasonLocked  *bool    `json:"seasonLocked"`
-	Season        *int     `json:"season"`
-	Hour          *float64 `json:"hour"`
-	RainMode      *string  `json:"rainMode"`
-	RainIntensity *float64 `json:"rainIntensity"`
-	Volume        *float64 `json:"volume"`
-	Muted         *bool    `json:"muted"`
-	ShowHud       *bool    `json:"showHud"`
-	RerollRain    *bool    `json:"rerollRain"`
-}
-
-type EnvView struct {
-	Env
-	DayLenMs       int     `json:"dayLenMs"`
-	SeasonLenMs    int     `json:"seasonLenMs"`
-	Phase          float64 `json:"phase"` // 0 sunrise, .5 sunset
-	IsDay          bool    `json:"isDay"`
-	Hour           float64 `json:"hour"`
-	Season         int     `json:"season"`
-	SeasonName     string  `json:"seasonName"`
-	SeasonProgress float64 `json:"seasonProgress"`
-	Raining        bool    `json:"raining"`
-	Intensity      float64 `json:"intensity"`
-	ServerTime     int64   `json:"serverTime"`
+type Battery struct {
+	Level    float64 `json:"level"`
+	Charging bool    `json:"charging"`
 }
 
 type Screen struct {
-	W   float64 `json:"w"`
-	H   float64 `json:"h"`
-	DPR float64 `json:"dpr"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Scene    string   `json:"scene"`
+	FpsCap   int      `json:"fpsCap"` // 0 = display refresh rate
+	W        float64  `json:"w"`
+	H        float64  `json:"h"`
+	DPR      float64  `json:"dpr"`
+	Online   bool     `json:"online"`
+	FPS      float64  `json:"fps"`
+	Audio    bool     `json:"audio"`
+	Battery  *Battery `json:"battery"`
+	LastSeen int64    `json:"lastSeen"`
 }
 
-type ClientInfo struct {
-	ID     string  `json:"id"`
-	Role   string  `json:"role"`
-	Addr   string  `json:"addr"`
-	UA     string  `json:"ua"`
-	Since  int64   `json:"since"`
-	Screen *Screen `json:"screen,omitempty"`
-	FPS    float64 `json:"fps,omitempty"`
-	Audio  bool    `json:"audio"`
+type Weather struct {
+	State     string  `json:"state"` // clear | cloudy | rain | storm
+	Intensity float64 `json:"intensity"`
+	Cloud     float64 `json:"cloud"`
+	Left      float64 `json:"left"` // virtual ms until next change
+}
+
+type Env struct {
+	DayMs        float64            `json:"dayMs"`
+	YearMs       float64            `json:"yearMs"`
+	DayMin       float64            `json:"dayMin"`
+	NightMin     float64            `json:"nightMin"`
+	SeasonMin    [4]float64         `json:"seasonMin"`
+	Paused       bool               `json:"paused"`
+	Speed        float64            `json:"speed"`
+	SeasonLocked bool               `json:"seasonLocked"`
+	WeatherMode  string             `json:"weatherMode"` // auto | clear | cloudy | rain | storm
+	Knobs        map[string]float64 `json:"knobs"`
+	Muted        bool               `json:"muted"`
+	ShowHud      bool               `json:"showHud"`
+	W            Weather            `json:"w"`
 }
 
 type Client struct {
-	info ClientInfo
-	conn *websocket.Conn
-	send chan []byte
+	id, role, screen string
+	conn             *websocket.Conn
+	send             chan []byte
 }
 
 type persisted struct {
-	Notes []*Note `json:"notes"`
-	Env   Env     `json:"env"`
+	Items   []*Item   `json:"items"`
+	Screens []*Screen `json:"screens"`
+	Env     Env       `json:"env"`
 }
-
-// ───────────────────────────── hub ─────────────────────────────
 
 type Hub struct {
 	mu       sync.Mutex
 	clients  map[string]*Client
-	notes    map[string]*Note
+	items    map[string]*Item
+	screens  map[string]*Screen
 	env      Env
 	dataPath string
 	dirty    bool
 	quit     chan struct{}
-	upgrader websocket.Upgrader
+	up       websocket.Upgrader
 }
 
 func NewHub(dataPath string) *Hub {
 	h := &Hub{
-		clients:  map[string]*Client{},
-		notes:    map[string]*Note{},
-		dataPath: dataPath,
-		quit:     make(chan struct{}),
-		env: Env{
-			Speed:         1,
-			RainMode:      "auto",
-			RainIntensity: 0.6,
-			Volume:        0.6,
-			ShowHud:       true,
-			DayMs:         dayLenMs * 0.12,
-			AutoTimerMs:   randRange(2, 6) * 60_000,
-		},
-		upgrader: websocket.Upgrader{
-			ReadBufferSize:  4096,
-			WriteBufferSize: 4096,
-			CheckOrigin:     func(*http.Request) bool { return true },
-		},
+		clients: map[string]*Client{}, items: map[string]*Item{}, screens: map[string]*Screen{},
+		dataPath: dataPath, quit: make(chan struct{}),
+		env: Env{DayMin: 10, NightMin: 10, SeasonMin: [4]float64{60, 60, 60, 60}, Speed: 1, WeatherMode: "auto",
+			ShowHud: true, Knobs: map[string]float64{}, W: Weather{State: "clear", Cloud: .3, Left: 5 * minute}},
+		up: websocket.Upgrader{ReadBufferSize: 4096, WriteBufferSize: 4096, CheckOrigin: func(*http.Request) bool { return true }},
 	}
+	h.env.DayMs = h.cycle() * .06
 	h.load()
+	for k, v := range knobDefs {
+		if _, ok := h.env.Knobs[k]; !ok {
+			h.env.Knobs[k] = v
+		}
+	}
 	return h
 }
 
@@ -178,45 +161,50 @@ func (h *Hub) load() {
 	}
 	var p persisted
 	if err := json.Unmarshal(b, &p); err != nil {
-		log.Printf("state file unreadable, starting fresh: %v", err)
+		log.Printf("state unreadable, starting fresh: %v", err)
 		return
 	}
-	for _, n := range p.Notes {
-		if n != nil && n.ID != "" {
-			clampNote(n)
-			h.notes[n.ID] = n
+	for _, it := range p.Items {
+		if it != nil && it.ID != "" {
+			fixItem(it)
+			h.items[it.ID] = it
+		}
+	}
+	for _, s := range p.Screens {
+		if s != nil && s.ID != "" {
+			s.Online = false
+			h.screens[s.ID] = s
 		}
 	}
 	if p.Env.Speed > 0 {
 		h.env = p.Env
+		if h.env.Knobs == nil {
+			h.env.Knobs = map[string]float64{}
+		}
+		fixEnv(&h.env)
 	}
-	log.Printf("loaded %d notes from %s", len(h.notes), h.dataPath)
+	log.Printf("loaded %d items, %d screens", len(h.items), len(h.screens))
 }
 
 func (h *Hub) save() {
 	h.mu.Lock()
-	p := persisted{Notes: h.sortedNotes(), Env: h.env}
+	p := persisted{Items: h.sortedItems(), Screens: h.screenList(), Env: h.env}
+	b, err := json.MarshalIndent(p, "", " ")
 	h.dirty = false
 	h.mu.Unlock()
-
-	b, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return
 	}
 	_ = os.MkdirAll(filepath.Dir(h.dataPath), 0o755)
-	tmp := h.dataPath + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err == nil {
-		_ = os.Rename(tmp, h.dataPath)
+	if os.WriteFile(h.dataPath+".tmp", b, 0o644) == nil {
+		_ = os.Rename(h.dataPath+".tmp", h.dataPath)
 	}
 }
 
-// Run advances the virtual clock, rolls the rain dice, broadcasts the
-// environment once a second and flushes state to disk.
 func (h *Hub) Run() {
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
-	last := time.Now()
-	n := 0
+	last, n := time.Now(), 0
 	for {
 		select {
 		case <-h.quit:
@@ -225,16 +213,15 @@ func (h *Hub) Run() {
 			dt := float64(now.Sub(last).Milliseconds())
 			last = now
 			n++
-
 			h.mu.Lock()
 			h.advance(dt)
 			if n%4 == 0 {
-				h.broadcastEnvLocked()
+				h.checkClocks(now)
+				h.bcast(h.envMsg())
 			}
-			saveNow := h.dirty || n%120 == 0 // notes changed, or every 30s for the clock
+			save := h.dirty || n%120 == 0
 			h.mu.Unlock()
-
-			if saveNow && n%8 == 0 {
+			if save && n%8 == 0 {
 				h.save()
 			}
 		}
@@ -246,174 +233,276 @@ func (h *Hub) Shutdown() {
 	h.save()
 	h.mu.Lock()
 	for _, c := range h.clients {
-		_ = c.conn.WriteControl(websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseGoingAway, "server shutdown"),
-			time.Now().Add(time.Second))
+		_ = c.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseGoingAway, "shutdown"), time.Now().Add(time.Second))
 		_ = c.conn.Close()
 	}
 	h.mu.Unlock()
 }
 
+// ── time & weather ──
+
+func (h *Hub) cycle() float64 { return (h.env.DayMin + h.env.NightMin) * minute }
+func (h *Hub) year() float64 {
+	s := 0.0
+	for _, m := range h.env.SeasonMin {
+		s += m
+	}
+	return s * minute
+}
+
+// phase: 0 sunrise, .5 sunset, day and night halves stretched to their own lengths
+func (h *Hub) phase() float64 {
+	dl, t := h.env.DayMin*minute, h.env.DayMs
+	if t < dl {
+		return .5 * t / dl
+	}
+	return .5 + .5*(t-dl)/(h.env.NightMin*minute)
+}
+func (h *Hub) setPhase(p float64) {
+	p = math.Mod(p+1, 1)
+	if p < .5 {
+		h.env.DayMs = p * 2 * h.env.DayMin * minute
+	} else {
+		h.env.DayMs = (h.env.DayMin + (p-.5)*2*h.env.NightMin) * minute
+	}
+}
+func (h *Hub) season() (int, float64) {
+	t := h.env.YearMs
+	for i, m := range h.env.SeasonMin {
+		if l := m * minute; t < l {
+			return i, t / l
+		} else {
+			t -= l
+		}
+	}
+	return 3, 1
+}
+func (h *Hub) setSeason(i int, prog float64) {
+	t := 0.0
+	for j := 0; j < i; j++ {
+		t += h.env.SeasonMin[j] * minute
+	}
+	h.env.YearMs = t + prog*h.env.SeasonMin[i]*minute
+}
+
 func (h *Hub) advance(dt float64) {
 	e := &h.env
-	if e.TimePaused {
+	if e.Paused {
 		return
 	}
 	v := dt * e.Speed
-	e.DayMs = math.Mod(e.DayMs+v, dayLenMs)
+	e.DayMs = math.Mod(e.DayMs+v, h.cycle())
 	if !e.SeasonLocked {
-		e.SeasonMs = math.Mod(e.SeasonMs+v, yearLenMs)
+		e.YearMs = math.Mod(e.YearMs+v, h.year())
 	}
-	e.AutoTimerMs -= v
-	if e.AutoTimerMs <= 0 {
-		h.rollRain(!e.AutoRaining)
-	}
-}
-
-func (h *Hub) rollRain(raining bool) {
-	e := &h.env
-	e.AutoRaining = raining
-	if raining {
-		e.AutoIntensity = randRange(0.3, 1)
-		e.AutoTimerMs = randRange(1.5, 5) * 60_000
-	} else {
-		e.AutoTimerMs = randRange(3, 12) * 60_000
+	if e.W.Left -= v; e.W.Left <= 0 {
+		h.nextWeather()
 	}
 }
 
-func (h *Hub) envView() EnvView {
-	e := h.env
-	phase := e.DayMs / dayLenMs
-	season := int(e.SeasonMs/seasonLenMs) % 4
-	v := EnvView{
-		Env:            e,
-		DayLenMs:       dayLenMs,
-		SeasonLenMs:    seasonLenMs,
-		Phase:          phase,
-		IsDay:          phase < 0.5,
-		Hour:           math.Mod(6+phase*24, 24),
-		Season:         season,
-		SeasonName:     seasonNames[season],
-		SeasonProgress: math.Mod(e.SeasonMs, seasonLenMs) / seasonLenMs,
-		ServerTime:     time.Now().UnixMilli(),
-	}
-	switch e.RainMode {
-	case "on":
-		v.Raining, v.Intensity = true, e.RainIntensity
-	case "off":
-		v.Raining = false
-	default:
-		v.Raining, v.Intensity = e.AutoRaining, e.AutoIntensity
-	}
-	if !v.Raining {
-		v.Intensity = 0
-	}
-	return v
-}
-
-func (h *Hub) applyEnv(p EnvPatch) {
-	e := &h.env
-	if p.TimePaused != nil {
-		e.TimePaused = *p.TimePaused
-	}
-	if p.Speed != nil {
-		e.Speed = clamp(*p.Speed, 0.1, 600)
-	}
-	if p.SeasonLocked != nil {
-		e.SeasonLocked = *p.SeasonLocked
-	}
-	if p.Season != nil {
-		s := ((*p.Season % 4) + 4) % 4
-		e.SeasonMs = float64(s)*seasonLenMs + seasonLenMs*0.02
-	}
-	if p.Hour != nil {
-		hr := math.Mod(*p.Hour, 24)
-		e.DayMs = math.Mod((hr-6)/24+1, 1) * dayLenMs
-	}
-	if p.RainMode != nil {
-		switch *p.RainMode {
-		case "auto", "on", "off":
-			e.RainMode = *p.RainMode
+// Markov weather: clear → cloudy → rain ⇄ storm, rain knob biases toward wet
+func (h *Hub) nextWeather() {
+	w, k := &h.env.W, h.env.Knobs["rain"]
+	next := "cloudy"
+	switch w.State {
+	case "cloudy":
+		if mrand.Float64() < .1+.8*k {
+			next = "rain"
+		} else {
+			next = "clear"
 		}
+	case "rain":
+		if r := mrand.Float64(); r < .35*k {
+			next = "storm"
+		} else if r < .6 {
+			next = "cloudy"
+		} else {
+			next = "clear"
+		}
+	case "storm":
+		next = "rain"
 	}
-	if p.RainIntensity != nil {
-		e.RainIntensity = clamp(*p.RainIntensity, 0.05, 1)
+	w.State = next
+	switch next {
+	case "clear":
+		w.Cloud, w.Intensity, w.Left = rr(.05, .45), 0, rr(4, 14)*(1.6-k)*minute
+	case "cloudy":
+		w.Cloud, w.Intensity, w.Left = rr(.55, .85), 0, rr(2, 7)*minute
+	case "rain":
+		w.Cloud, w.Intensity, w.Left = rr(.8, .95), rr(.3, .75), rr(2, 6)*(.5+k)*minute
+	case "storm":
+		w.Cloud, w.Intensity, w.Left = 1, rr(.8, 1), rr(1, 3)*minute
 	}
-	if p.Volume != nil {
-		e.Volume = clamp(*p.Volume, 0, 1)
+}
+
+func (h *Hub) envView() map[string]any {
+	e := h.env
+	p := h.phase()
+	si, sp := h.season()
+	w := e.W
+	switch e.WeatherMode {
+	case "clear":
+		w = Weather{State: "clear", Cloud: .2}
+	case "cloudy":
+		w = Weather{State: "cloudy", Cloud: .75}
+	case "rain":
+		w = Weather{State: "rain", Cloud: .9, Intensity: .6}
+	case "storm":
+		w = Weather{State: "storm", Cloud: 1, Intensity: 1}
 	}
-	if p.Muted != nil {
-		e.Muted = *p.Muted
+	return map[string]any{
+		"env": e, "phase": p, "isDay": p < .5, "hour": math.Mod(6+p*24, 24),
+		"season": si, "seasonName": seasonNames[si], "seasonProgress": sp, "seasonLeftMs": (1 - sp) * e.SeasonMin[si] * minute,
+		"weather": w, "cycleMs": h.cycle(), "serverTime": time.Now().UnixMilli(), "knobDefs": knobDefs,
 	}
-	if p.ShowHud != nil {
-		e.ShowHud = *p.ShowHud
+}
+
+func (h *Hub) envMsg() []byte { return mustJSON(map[string]any{"type": "env", "env": h.envView()}) }
+
+func (h *Hub) applyEnv(raw json.RawMessage) {
+	var sp struct {
+		Season *int     `json:"season"`
+		Hour   *float64 `json:"hour"`
+		Reroll bool     `json:"reroll"`
 	}
-	if p.RerollRain != nil && *p.RerollRain {
-		h.rollRain(!e.AutoRaining)
+	if json.Unmarshal(raw, &sp) != nil {
+		return
+	}
+	p0 := h.phase()
+	s0, sp0 := h.season()
+	w := h.env.W
+	_ = json.Unmarshal(raw, &h.env)
+	h.env.W = w
+	fixEnv(&h.env)
+	h.setPhase(p0)
+	h.setSeason(s0, sp0)
+	if sp.Season != nil {
+		h.setSeason(((*sp.Season%4)+4)%4, .02)
+	}
+	if sp.Hour != nil {
+		h.setPhase((*sp.Hour - 6) / 24)
+	}
+	if sp.Reroll {
+		h.nextWeather()
 	}
 	h.dirty = true
 }
 
-// ───────────────────────────── websocket ─────────────────────────────
+func fixEnv(e *Env) {
+	e.DayMin, e.NightMin = clamp(e.DayMin, .5, 720), clamp(e.NightMin, .5, 720)
+	for i := range e.SeasonMin {
+		e.SeasonMin[i] = clamp(e.SeasonMin[i], 1, 10080)
+	}
+	e.Speed = clamp(e.Speed, .1, 600)
+	for k, v := range e.Knobs {
+		e.Knobs[k] = clamp(v, 0, 1)
+	}
+	switch e.WeatherMode {
+	case "auto", "clear", "cloudy", "rain", "storm":
+	default:
+		e.WeatherMode = "auto"
+	}
+}
+
+// ── clocks ──
+
+func (h *Hub) checkClocks(now time.Time) {
+	ms := now.UnixMilli()
+	for _, it := range h.items {
+		c := it.Clock
+		if c == nil {
+			continue
+		}
+		changed := false
+		if c.Mode == "countdown" && c.Running && c.Acc+ms-c.StartAt >= c.Duration {
+			c.Running, c.Acc, c.Ringing, c.RingAt, changed = false, c.Duration, true, ms, true
+		}
+		if key := now.Format("2006-01-02 ") + c.Alarm; c.Mode == "alarm" && c.Running && now.Format("15:04") == c.Alarm && c.Fired != key {
+			c.Fired, c.Ringing, c.RingAt, changed = key, true, ms, true
+		}
+		if c.Ringing && ms-c.RingAt > 3*60_000 {
+			c.Ringing, changed = false, true
+		}
+		if changed {
+			h.dirty = true
+			h.bcast(itemMsg(it, ""))
+		}
+	}
+}
+
+func clockAct(c *Clock, act string) {
+	now := time.Now().UnixMilli()
+	switch act {
+	case "start":
+		if c.Mode == "countdown" && c.Acc >= c.Duration {
+			c.Acc = 0
+		}
+		if !c.Running {
+			c.Running, c.StartAt = true, now
+		}
+	case "pause":
+		if c.Running && c.Mode != "alarm" {
+			c.Acc += now - c.StartAt
+		}
+		c.Running = false
+	case "reset":
+		c.Acc, c.StartAt = 0, now
+		if c.Mode != "alarm" {
+			c.Running = false
+		}
+	}
+	c.Ringing = false
+}
+
+// ── websocket ──
 
 type inbound struct {
 	Type   string          `json:"type"`
 	ID     string          `json:"id"`
+	Screen string          `json:"screen"`
+	Kind   string          `json:"kind"`
+	Act    string          `json:"act"`
 	Patch  json.RawMessage `json:"patch"`
-	Screen *Screen         `json:"screen"`
-	FPS    float64         `json:"fps"`
-	Audio  *bool           `json:"audio"`
-	Title  string          `json:"title"`
-	Body   string          `json:"content"`
 }
 
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
-	role := r.URL.Query().Get("role")
-	if role != "control" && role != "monitor" {
-		http.Error(w, "role must be control or monitor", http.StatusBadRequest)
+	q := r.URL.Query()
+	role, sid := q.Get("role"), q.Get("screen")
+	if role != "control" && !(role == "monitor" && screenIDRe.MatchString(sid)) {
+		http.Error(w, "role=control or role=monitor&screen=<id>", http.StatusBadRequest)
 		return
 	}
-	conn, err := h.upgrader.Upgrade(w, r, nil)
+	conn, err := h.up.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
-	c := &Client{
-		conn: conn,
-		send: make(chan []byte, sendBuffer),
-		info: ClientInfo{
-			ID:    newID(),
-			Role:  role,
-			Addr:  r.RemoteAddr,
-			UA:    r.UserAgent(),
-			Since: time.Now().UnixMilli(),
-		},
-	}
+	c := &Client{id: newID(), role: role, screen: sid, conn: conn, send: make(chan []byte, sendBuffer)}
 
 	h.mu.Lock()
-	if role == "monitor" { // single monitor: newest wins, older ones are kicked
-		kick := mustJSON(map[string]any{"type": "kicked", "reason": "another monitor connected"})
-		for id, o := range h.clients {
-			if o.info.Role == "monitor" {
-				h.sendLocked(o, kick)
+	if role == "monitor" {
+		for id, o := range h.clients { // one live connection per screen id: newest wins
+			if o.screen == sid {
+				h.sendLocked(o, mustJSON(map[string]any{"type": "kicked"}))
 				delete(h.clients, id)
-				close(o.send) // writePump flushes the kick, then sends close
-				log.Printf("x monitor %s replaced", id)
+				close(o.send)
 			}
 		}
+		s := h.screens[sid]
+		if s == nil {
+			s = &Screen{ID: sid, Name: sid, Scene: "meadow"}
+			h.screens[sid] = s
+			for _, it := range h.items {
+				it.L[sid] = defLayout(it.Kind)
+			}
+		}
+		s.Online, s.LastSeen = true, time.Now().UnixMilli()
+		h.dirty = true
 	}
-	h.clients[c.info.ID] = c
-	welcome := mustJSON(map[string]any{
-		"type":    "welcome",
-		"id":      c.info.ID,
-		"role":    role,
-		"notes":   h.sortedNotes(),
-		"env":     h.envView(),
-		"clients": h.clientList(),
-	})
-	c.send <- welcome
-	h.broadcastClientsLocked()
+	h.clients[c.id] = c
+	c.send <- mustJSON(map[string]any{"type": "welcome", "id": c.id, "items": h.sortedItems(), "screens": h.screenList(), "env": h.envView()})
+	h.bcastScreens()
 	h.mu.Unlock()
-	log.Printf("+ %s %s (%s)", role, c.info.ID, c.info.Addr)
+	log.Printf("+ %s %s %s", role, sid, r.RemoteAddr)
 
 	go h.writePump(c)
 	h.readPump(c)
@@ -423,29 +512,23 @@ func (h *Hub) readPump(c *Client) {
 	defer h.remove(c)
 	c.conn.SetReadLimit(maxMsgBytes)
 	_ = c.conn.SetReadDeadline(time.Now().Add(pongWait))
-	c.conn.SetPongHandler(func(string) error {
-		return c.conn.SetReadDeadline(time.Now().Add(pongWait))
-	})
+	c.conn.SetPongHandler(func(string) error { return c.conn.SetReadDeadline(time.Now().Add(pongWait)) })
 	for {
 		_, data, err := c.conn.ReadMessage()
 		if err != nil {
-			return // timeout, close frame or broken pipe → cleanup in remove()
+			return
 		}
 		_ = c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		var m inbound
-		if json.Unmarshal(data, &m) != nil {
-			continue
+		if json.Unmarshal(data, &m) == nil {
+			h.handle(c, m)
 		}
-		h.handle(c, m)
 	}
 }
 
 func (h *Hub) writePump(c *Client) {
 	ping := time.NewTicker(pingEvery)
-	defer func() {
-		ping.Stop()
-		_ = c.conn.Close()
-	}()
+	defer func() { ping.Stop(); _ = c.conn.Close() }()
 	for {
 		select {
 		case msg, ok := <-c.send:
@@ -454,27 +537,28 @@ func (h *Hub) writePump(c *Client) {
 				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
-			if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			if c.conn.WriteMessage(websocket.TextMessage, msg) != nil {
 				return
 			}
 		case <-ping.C:
 			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+			if c.conn.WriteMessage(websocket.PingMessage, nil) != nil {
 				return
 			}
 		}
 	}
 }
 
-// remove drops a client from the hub and releases its resources. Safe to
-// call more than once.
 func (h *Hub) remove(c *Client) {
 	h.mu.Lock()
-	if _, ok := h.clients[c.info.ID]; ok {
-		delete(h.clients, c.info.ID)
-		close(c.send) // ends writePump, which closes the socket
-		h.broadcastClientsLocked()
-		log.Printf("- %s %s", c.info.Role, c.info.ID)
+	if _, ok := h.clients[c.id]; ok {
+		delete(h.clients, c.id)
+		close(c.send)
+		if s := h.screens[c.screen]; s != nil && c.role == "monitor" {
+			s.Online, s.LastSeen = false, time.Now().UnixMilli()
+			h.bcastScreens()
+		}
+		log.Printf("- %s %s", c.role, c.screen)
 	}
 	h.mu.Unlock()
 	_ = c.conn.Close()
@@ -483,183 +567,191 @@ func (h *Hub) remove(c *Client) {
 func (h *Hub) handle(c *Client, m inbound) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	ctl := c.role == "control"
+	it := h.items[m.ID]
 
-	switch m.Type {
-	case "ping":
-		h.sendLocked(c, mustJSON(map[string]any{"type": "pong", "t": time.Now().UnixMilli()}))
+	switch {
+	case m.Type == "ping":
+		h.sendLocked(c, []byte(`{"type":"pong"}`))
 
-	case "screen":
-		if m.Screen != nil && m.Screen.W > 0 && m.Screen.H > 0 {
-			c.info.Screen = m.Screen
-			h.broadcastClientsLocked()
+	case m.Type == "stats" && c.role == "monitor":
+		if s := h.screens[c.screen]; s != nil {
+			name, scene, fc := s.Name, s.Scene, s.FpsCap
+			_ = json.Unmarshal(m.Patch, s) // w,h,dpr,fps,audio,battery
+			s.ID, s.Name, s.Scene, s.FpsCap, s.Online, s.LastSeen = c.screen, name, scene, fc, true, time.Now().UnixMilli()
+			h.bcastScreens()
 		}
 
-	case "stats":
-		c.info.FPS = m.FPS
-		if m.Audio != nil {
-			c.info.Audio = *m.Audio
-		}
-		h.broadcastClientsLocked()
+	case !ctl:
+		return
 
-	case "note.create":
-		if c.info.Role != "control" {
-			return
+	case m.Type == "item.create":
+		it = &Item{ID: newID(), Kind: "note", Title: "Note", Content: "# Hello\n\nWrite **markdown** here.", Font: "blex", FontSize: 16,
+			Z: h.maxZ() + 1, Created: time.Now().UnixMilli(), L: map[string]*Layout{}}
+		if m.Kind == "clock" {
+			it.Kind, it.Title, it.Content, it.FontSize = "clock", "Clock", "", 28
+			it.Clock = &Clock{Mode: "clock", Display: "digital", Style: "glass", Duration: 5 * 60_000, Alarm: "07:00"}
 		}
-		now := time.Now().UnixMilli()
-		n := &Note{
-			ID: newID(), Title: m.Title, Content: m.Body, Enabled: true,
-			W: 0.26, H: 0.3, FontSize: 16, Z: h.maxZ() + 1,
-			Created: now, Updated: now,
+		for sid := range h.screens {
+			it.L[sid] = defLayout(it.Kind)
 		}
-		if n.Title == "" {
-			n.Title = "Untitled"
-		}
-		n.X, n.Y = 1-n.W-0.015, 1-n.H-0.025 // bottom right
-		h.notes[n.ID] = n
+		h.items[it.ID] = it
 		h.dirty = true
-		h.broadcastLocked(mustJSON(map[string]any{"type": "note.upsert", "note": n, "by": c.info.ID, "created": true}))
+		h.bcast(itemMsg(it, c.id))
 
-	case "note.update":
-		if c.info.Role != "control" {
-			return
+	case m.Type == "env.set":
+		h.applyEnv(m.Patch)
+		h.bcast(h.envMsg())
+	case m.Type == "screen.update":
+		if s := h.screens[m.Screen]; s != nil && ctl {
+			var p struct {
+				Name   *string `json:"name"`
+				Scene  *string `json:"scene"`
+				FpsCap *int    `json:"fpsCap"`
+			}
+			_ = json.Unmarshal(m.Patch, &p)
+			if p.Name != nil && *p.Name != "" {
+				s.Name = *p.Name
+			}
+			if p.Scene != nil && scenes[*p.Scene] {
+				s.Scene = *p.Scene
+			}
+			if p.FpsCap != nil {
+				s.FpsCap = max(0, min(240, *p.FpsCap))
+			}
+			h.dirty = true
+			h.bcastScreens()
 		}
-		n, ok := h.notes[m.ID]
-		if !ok {
-			return
+	case m.Type == "screen.delete":
+		if s := h.screens[m.Screen]; s != nil && ctl && !s.Online {
+			delete(h.screens, s.ID)
+			for _, it := range h.items {
+				delete(it.L, s.ID)
+			}
+			h.dirty = true
+			h.bcastScreens()
 		}
-		var p NotePatch
-		if json.Unmarshal(m.Patch, &p) != nil {
-			return
+
+	case it == nil:
+		return
+
+	case m.Type == "item.update":
+		id, kind, l, clk := it.ID, it.Kind, it.L, it.Clock
+		_ = json.Unmarshal(m.Patch, it)
+		it.ID, it.Kind, it.L = id, kind, l
+		if kind == "clock" && it.Clock == nil {
+			it.Clock = clk
 		}
-		applyNote(n, p)
-		n.Updated = time.Now().UnixMilli()
+		fixItem(it)
 		h.dirty = true
-		h.broadcastLocked(mustJSON(map[string]any{"type": "note.upsert", "note": n, "by": c.info.ID}))
+		h.bcast(itemMsg(it, c.id))
 
-	case "note.front":
-		if n, ok := h.notes[m.ID]; ok && c.info.Role == "control" {
-			n.Z = h.maxZ() + 1
-			h.dirty = true
-			h.broadcastLocked(mustJSON(map[string]any{"type": "note.upsert", "note": n, "by": c.info.ID}))
-		}
+	case m.Type == "clock.act" && it.Clock != nil:
+		clockAct(it.Clock, m.Act)
+		h.dirty = true
+		h.bcast(itemMsg(it, c.id))
 
-	case "note.delete":
-		if _, ok := h.notes[m.ID]; ok && c.info.Role == "control" {
-			delete(h.notes, m.ID)
-			h.dirty = true
-			h.broadcastLocked(mustJSON(map[string]any{"type": "note.remove", "id": m.ID, "by": c.info.ID}))
+	case m.Type == "layout.set":
+		sids := []string{m.Screen}
+		if m.Screen == "*" {
+			sids = sids[:0]
+			for sid := range h.screens {
+				sids = append(sids, sid)
+			}
 		}
+		for _, sid := range sids {
+			if l := it.L[sid]; l != nil {
+				_ = json.Unmarshal(m.Patch, l)
+				clampLayout(l)
+			}
+		}
+		h.dirty = true
+		h.bcast(itemMsg(it, c.id))
 
-	case "env.set":
-		if c.info.Role != "control" {
-			return
-		}
-		var p EnvPatch
-		if json.Unmarshal(m.Patch, &p) != nil {
-			return
-		}
-		h.applyEnv(p)
-		h.broadcastEnvLocked()
+	case m.Type == "item.front":
+		it.Z = h.maxZ() + 1
+		h.bcast(itemMsg(it, c.id))
+
+	case m.Type == "item.delete":
+		delete(h.items, it.ID)
+		h.dirty = true
+		h.bcast(mustJSON(map[string]any{"type": "item.remove", "id": it.ID}))
 	}
+
 }
 
-// ───────────────────────────── broadcast helpers (hold h.mu) ─────────────────────────────
+// ── helpers (hold h.mu) ──
 
 func (h *Hub) sendLocked(c *Client, msg []byte) {
 	select {
 	case c.send <- msg:
 	default:
-		// client cannot keep up: drop it, the read pump will clean up
-		go c.conn.Close()
+		go c.conn.Close() // too slow: drop, readPump cleans up
 	}
 }
-
-func (h *Hub) broadcastLocked(msg []byte) {
+func (h *Hub) bcast(msg []byte) {
 	for _, c := range h.clients {
 		h.sendLocked(c, msg)
 	}
 }
-
-func (h *Hub) broadcastEnvLocked() {
-	h.broadcastLocked(mustJSON(map[string]any{"type": "env", "env": h.envView()}))
+func (h *Hub) bcastScreens() {
+	h.bcast(mustJSON(map[string]any{"type": "screens", "screens": h.screenList()}))
 }
 
-func (h *Hub) broadcastClientsLocked() {
-	msg := mustJSON(map[string]any{"type": "clients", "clients": h.clientList()})
-	for _, c := range h.clients {
-		if c.info.Role == "control" {
-			h.sendLocked(c, msg)
-		}
+func (h *Hub) screenList() []*Screen {
+	out := make([]*Screen, 0, len(h.screens))
+	for _, s := range h.screens {
+		out = append(out, s)
 	}
-}
-
-func (h *Hub) clientList() []ClientInfo {
-	out := make([]ClientInfo, 0, len(h.clients))
-	for _, c := range h.clients {
-		out = append(out, c.info)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Since < out[j].Since })
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
-
-func (h *Hub) sortedNotes() []*Note {
-	out := make([]*Note, 0, len(h.notes))
-	for _, n := range h.notes {
-		out = append(out, n)
+func (h *Hub) sortedItems() []*Item {
+	out := make([]*Item, 0, len(h.items))
+	for _, it := range h.items {
+		out = append(out, it)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Created < out[j].Created })
 	return out
 }
-
 func (h *Hub) maxZ() int {
 	z := 0
-	for _, n := range h.notes {
-		if n.Z > z {
-			z = n.Z
-		}
+	for _, it := range h.items {
+		z = max(z, it.Z)
 	}
 	return z
 }
 
-// ───────────────────────────── utils ─────────────────────────────
-
-func applyNote(n *Note, p NotePatch) {
-	if p.Title != nil {
-		n.Title = *p.Title
-	}
-	if p.Content != nil {
-		n.Content = *p.Content
-	}
-	if p.Enabled != nil {
-		n.Enabled = *p.Enabled
-	}
-	if p.W != nil {
-		n.W = *p.W
-	}
-	if p.H != nil {
-		n.H = *p.H
-	}
-	if p.X != nil {
-		n.X = *p.X
-	}
-	if p.Y != nil {
-		n.Y = *p.Y
-	}
-	if p.FontSize != nil {
-		n.FontSize = *p.FontSize
-	}
-	clampNote(n)
+func itemMsg(it *Item, by string) []byte {
+	return mustJSON(map[string]any{"type": "item.upsert", "item": it, "by": by})
 }
 
-func clampNote(n *Note) {
-	n.W = clamp(n.W, 0.02, 1)
-	n.H = clamp(n.H, 0.02, 1)
-	n.X = clamp(n.X, 0, 1-n.W)
-	n.Y = clamp(n.Y, 0, 1-n.H)
-	if n.FontSize == 0 {
-		n.FontSize = 16
+func defLayout(kind string) *Layout {
+	if kind == "clock" {
+		return &Layout{X: .985 - .2, Y: .08, W: .2, H: .16, On: true}
 	}
-	n.FontSize = clamp(n.FontSize, 6, 120)
+	return &Layout{X: .985 - .26, Y: .975 - .3, W: .26, H: .3, On: true}
+}
+
+func fixItem(it *Item) {
+	if it.L == nil {
+		it.L = map[string]*Layout{}
+	}
+	for _, l := range it.L {
+		clampLayout(l)
+	}
+	if it.FontSize == 0 {
+		it.FontSize = 16
+	}
+	it.FontSize = clamp(it.FontSize, 6, 200)
+	if c := it.Clock; c != nil {
+		c.Duration = int64(clamp(float64(c.Duration), 1000, 100*3600_000))
+	}
+}
+
+func clampLayout(l *Layout) {
+	l.W, l.H = clamp(l.W, .02, 1), clamp(l.H, .02, 1)
+	l.X, l.Y = clamp(l.X, 0, 1-l.W), clamp(l.Y, 0, 1-l.H)
 }
 
 func clamp(v, lo, hi float64) float64 {
@@ -668,16 +760,10 @@ func clamp(v, lo, hi float64) float64 {
 	}
 	return math.Max(lo, math.Min(hi, v))
 }
-
-func randRange(a, b float64) float64 { return a + mrand.Float64()*(b-a) }
-
+func rr(a, b float64) float64 { return a + mrand.Float64()*(b-a) }
 func newID() string {
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
-
-func mustJSON(v any) []byte {
-	b, _ := json.Marshal(v)
-	return b
-}
+func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }

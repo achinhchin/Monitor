@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Monitor Control</title>
 <link rel="stylesheet" href="/shared/fonts.css">
 <link rel="stylesheet" href="style.css">
@@ -13,103 +13,96 @@
 <header class="glass bar">
   <b class="brand">◐ control</b>
   <span id="conn" class="pill"><i class="dot"></i><span>connecting</span></span>
-  <span id="scr" class="pill">no monitor</span>
   <span class="grow"></span>
   <span id="stClock" class="pill">--:--</span>
   <span id="stSeason" class="pill">—</span>
-  <span id="stRain" class="pill">—</span>
+  <span id="stWx" class="pill">—</span>
 </header>
 
 <main>
-  <aside class="glass col" id="listCol">
-    <div class="head"><h2>Notes</h2><button id="newNote" class="btn pri">+ New</button></div>
-    <ul id="list"></ul>
-  </aside>
+  <div class="c1">
+    <section class="glass card">
+      <div class="head"><h2>Screens</h2><button id="newScreen" class="btn sm" title="Open a new monitor screen">+ open</button></div>
+      <ul id="screens" class="list"></ul>
+      <div id="scrEdit">
+        <div class="row"><input id="scrName" class="in grow" placeholder="Screen name"><button id="scrLink" class="btn sm" title="Copy monitor link">🔗</button><button id="scrDel" class="btn sm ghost" title="Forget (offline only)">✕</button></div>
+        <div class="row"><select id="scrScene" class="in grow"><option value="meadow">🌾 Meadow</option><option value="forest">🌲 Forest</option><option value="mountain">🏔 Mountain</option><option value="beach">🏖 Beach</option><option value="city">🏘 City</option></select>
+          <select id="scrFps" class="in" title="Frame rate cap"><option value="0">max fps</option><option value="120">120</option><option value="60">60</option><option value="30">30</option></select></div>
+      </div>
+    </section>
+    <section class="glass card grow-card">
+      <div class="head"><h2>Items</h2><button id="newNote" class="btn sm pri">+ Note</button><button id="newClock" class="btn sm pri">+ Clock</button></div>
+      <ul id="list" class="list"></ul>
+    </section>
+  </div>
 
-  <section class="glass col" id="editCol">
-    <div id="empty" class="empty">Create or pick a note</div>
+  <section class="glass card c2" id="editCol">
+    <div id="empty" class="empty">Create or pick a note or clock</div>
     <div id="editor" hidden>
       <div class="row">
         <input id="title" class="in grow" placeholder="Title">
-        <label class="sw" title="Show on monitor"><input type="checkbox" id="enabled"><span></span></label>
+        <label class="sw" title="Show on selected screen"><input type="checkbox" id="enabled"><span></span></label>
         <button id="del" class="btn ghost" title="Delete">✕</button>
       </div>
-      <div class="row tabs">
-        <button data-view="split" class="seg on">Split</button><button data-view="edit" class="seg">Edit</button><button data-view="prev" class="seg">Preview</button>
-        <span class="grow"></span>
-        <label class="mini">font <input id="fs" type="number" class="in num" min="6" max="120"></label>
+      <div class="row wrap">
+        <select id="font" class="in grow"></select>
+        <label class="mini">size <input id="fs" type="number" class="in num" min="6" max="200"></label>
       </div>
-      <div id="panes" class="panes split">
-        <textarea id="content" class="in md" spellcheck="false" placeholder="# Markdown here…"></textarea>
-        <div id="preview" class="md-view"></div>
+      <div id="noteEd" class="fill">
+        <div class="row tabs"><button data-view="split" class="seg on">Split</button><button data-view="edit" class="seg">Edit</button><button data-view="prev" class="seg">Preview</button></div>
+        <div id="panes" class="panes split"><textarea id="content" class="in md" spellcheck="false" placeholder="# Markdown here…"></textarea><div id="preview" class="md-view"></div></div>
+      </div>
+      <div id="clockEd" hidden>
+        <div class="row segs" id="cMode"><button data-v="clock" class="seg">🕰 clock</button><button data-v="timer" class="seg">⏱ timer</button><button data-v="countdown" class="seg">⏳ countdown</button><button data-v="alarm" class="seg">⏰ alarm</button></div>
+        <div class="row segs" id="cDisp"><button data-v="digital" class="seg">digital</button><button data-v="analog" class="seg">analog</button></div>
+        <div class="row"><span class="mini">style</span><div id="cStyle" class="chips"></div></div>
+        <div class="row" id="cDur"><span class="mini">duration</span><input data-u="3600000" class="in num" type="number" min="0" placeholder="h"><input data-u="60000" class="in num" type="number" min="0" max="59" placeholder="m"><input data-u="1000" class="in num" type="number" min="0" max="59" placeholder="s"></div>
+        <div class="row" id="cAlarm"><span class="mini">alarm at</span><input id="alarmAt" type="time" class="in"><label class="chk"><input type="checkbox" id="armed"> armed</label></div>
+        <div class="row" id="cCtl"><button data-act="start" class="btn">▶ start</button><button data-act="pause" class="btn">❚❚ pause</button><button data-act="reset" class="btn">↺ reset</button><button data-act="dismiss" class="btn warn" id="dismiss">🔕 stop</button></div>
+        <div id="cLive" class="live mono"></div>
       </div>
     </div>
   </section>
 
-  <aside class="col side">
-    <div class="glass card">
-      <div class="head"><h2>Position</h2><button id="openScreen" class="btn pri">⛶ Screen</button></div>
+  <div class="c3">
+    <section class="glass card">
+      <div class="head"><h2>Layout <span id="layScr" class="dim mono"></span></h2><button id="openScreen" class="btn sm pri">⛶ Screen</button></div>
       <div id="posBox">
-        <div class="pad">
-          <button data-mv="0,-1,1" class="btn">↑</button>
-          <button data-mv="-1,0,1" class="btn">←</button><button data-mv="1,0,1" class="btn">→</button>
-          <button data-mv="0,1,1" class="btn">↓</button>
-          <span class="lbl">fast</span>
+        <div class="pads">
+          <div class="pad"><button data-mv="0,-1,1" class="btn">↑</button><button data-mv="-1,0,1" class="btn">←</button><button data-mv="1,0,1" class="btn">→</button><button data-mv="0,1,1" class="btn">↓</button><span class="lbl">fast</span></div>
+          <div class="pad fine"><button data-mv="0,-1,0" class="btn">↑</button><button data-mv="-1,0,0" class="btn">←</button><button data-mv="1,0,0" class="btn">→</button><button data-mv="0,1,0" class="btn">↓</button><span class="lbl">fine</span></div>
+          <div class="pad sz"><button data-rz="0,-1" class="btn">−</button><button data-rz="-1,0" class="btn">−</button><button data-rz="1,0" class="btn">+</button><button data-rz="0,1" class="btn">+</button><span class="lbl">size</span></div>
         </div>
-        <div class="pad fine">
-          <button data-mv="0,-1,0" class="btn">↑</button>
-          <button data-mv="-1,0,0" class="btn">←</button><button data-mv="1,0,0" class="btn">→</button>
-          <button data-mv="0,1,0" class="btn">↓</button>
-          <span class="lbl">fine</span>
-        </div>
-        <div class="grid4">
-          <label>x<input data-k="x" class="in num" type="number"></label>
-          <label>y<input data-k="y" class="in num" type="number"></label>
-          <label>w<input data-k="w" class="in num" type="number"></label>
-          <label>h<input data-k="h" class="in num" type="number"></label>
-        </div>
-        <div class="row"><label class="mini">fast step <input id="fastStep" class="in num" type="number" value="40" min="2"></label><label class="mini">fine <input id="fineStep" class="in num" type="number" value="2" min="1"></label></div>
-        <div class="row"><button class="btn sm" data-snap="br">↘ reset</button><button class="btn sm" data-snap="tl">↖</button><button class="btn sm" data-snap="tr">↗</button><button class="btn sm" data-snap="bl">↙</button><button class="btn sm" data-snap="c">◎</button></div>
+        <div class="grid4"><label>x<input data-k="x" class="in num" type="number"></label><label>y<input data-k="y" class="in num" type="number"></label><label>w<input data-k="w" class="in num" type="number"></label><label>h<input data-k="h" class="in num" type="number"></label></div>
+        <div class="row"><label class="mini">fast <input id="fastStep" class="in num" type="number" value="40" min="2"></label><label class="mini">fine <input id="fineStep" class="in num" type="number" value="2" min="1"></label><span class="grow"></span><button id="toAll" class="btn sm" title="Copy this layout to every screen">⇉ all screens</button></div>
+        <div class="row"><button class="btn sm grow" data-snap="br">↘ reset</button><button class="btn sm grow" data-snap="tl">↖</button><button class="btn sm grow" data-snap="tr">↗</button><button class="btn sm grow" data-snap="bl">↙</button><button class="btn sm grow" data-snap="c">◎</button></div>
       </div>
-    </div>
+    </section>
 
-    <div class="glass card">
+    <section class="glass card">
       <div class="head"><h2>Environment</h2></div>
-      <div class="row segs" id="seasons">
-        <button data-s="0" class="seg">🌸</button><button data-s="1" class="seg">☀️</button><button data-s="2" class="seg">🍂</button><button data-s="3" class="seg">❄️</button>
-        <label class="chk"><input type="checkbox" id="lockSeason"> lock</label>
-      </div>
-      <div class="prog"><i id="seasonBar"></i></div>
       <div class="row"><input id="hour" type="range" min="0" max="24" step="0.05" class="grow"><span id="hourLbl" class="mono">--:--</span></div>
-      <div class="row">
-        <button id="pause" class="btn sm grow">❚❚ pause</button>
-        <select id="speed" class="in sel"><option value="1">1×</option><option value="2">2×</option><option value="5">5×</option><option value="20">20×</option><option value="60">60×</option></select>
-      </div>
-      <div class="row">
-        <button class="btn sm grow" data-hr="6">dawn</button><button data-hr="12" class="btn sm grow">noon</button><button class="btn sm grow" data-hr="18.2">dusk</button><button class="btn sm grow" data-hr="0">night</button>
-      </div>
-      <div class="row segs" id="rain">
-        <button data-r="auto" class="seg">auto</button><button data-r="on" class="seg">rain</button><button data-r="off" class="seg">clear</button>
-        <button id="reroll" class="btn sm" title="Toggle auto rain now">🎲</button>
-      </div>
-      <div class="row"><span class="mini">intensity</span><input id="intensity" type="range" min="0.05" max="1" step="0.01" class="grow"></div>
-      <div class="row"><button id="mute" class="btn sm">🔊</button><input id="vol" type="range" min="0" max="1" step="0.01" class="grow"><label class="chk"><input type="checkbox" id="hud"> hud</label></div>
-    </div>
+      <div class="row"><button class="btn sm grow" data-hr="6">dawn</button><button class="btn sm grow" data-hr="12">noon</button><button class="btn sm grow" data-hr="18.2">dusk</button><button class="btn sm grow" data-hr="0">night</button></div>
+      <div class="row wrap"><button id="pause" class="btn sm">❚❚ pause</button><select id="speed" class="in sel"><option value="1">1×</option><option value="2">2×</option><option value="5">5×</option><option value="20">20×</option><option value="60">60×</option></select>
+        <span class="grow"></span><label class="mini">☀ min <input id="dayMin" class="in num" type="number" min="0.5" step="0.5"></label><label class="mini">☾ min <input id="nightMin" class="in num" type="number" min="0.5" step="0.5"></label></div>
+      <div class="row segs" id="seasons"><button data-s="0" class="seg">🌸</button><button data-s="1" class="seg">☀️</button><button data-s="2" class="seg">🍂</button><button data-s="3" class="seg">❄️</button><label class="chk"><input type="checkbox" id="lockSeason"> lock</label></div>
+      <div class="prog"><i id="seasonBar"></i></div>
+      <div class="row grid4 slen"><label>🌸 min<input data-sl="0" class="in num" type="number" min="1"></label><label>☀️ min<input data-sl="1" class="in num" type="number" min="1"></label><label>🍂 min<input data-sl="2" class="in num" type="number" min="1"></label><label>❄️ min<input data-sl="3" class="in num" type="number" min="1"></label></div>
+      <div class="row segs" id="weather"><button data-w="auto" class="seg">auto</button><button data-w="clear" class="seg">☀</button><button data-w="cloudy" class="seg">☁</button><button data-w="rain" class="seg">☂</button><button data-w="storm" class="seg">⛈</button><button id="reroll" class="btn sm" title="Next weather now">🎲</button></div>
+      <div class="knobs"><div class="knob" data-k="animals" data-l="animals"></div><div class="knob" data-k="rain" data-l="rain"></div><div class="knob" data-k="wind" data-l="wind"></div><div class="knob" data-k="volume" data-l="volume"></div></div>
+      <div class="row"><button id="mute" class="btn sm">🔊</button><label class="chk"><input type="checkbox" id="hud"> hud</label></div>
+    </section>
 
-    <div class="glass card">
+    <section class="glass card">
       <div class="head"><h2>Status</h2></div>
       <div id="status" class="status"></div>
-    </div>
-  </aside>
+    </section>
+  </div>
 </main>
 
 <div id="modal" class="modal" hidden>
   <div class="glass sheet">
-    <div class="head">
-      <h2>Screen <span id="scrLbl" class="mono dim"></span></h2>
-      <span class="mini dim">drag to move · corner to resize · arrows (+shift fast, +alt resize)</span>
-      <button id="closeScreen" class="btn ghost">✕</button>
-    </div>
+    <div class="head"><h2>Screen <span id="scrLbl" class="mono dim"></span></h2><span class="mini dim hide-s">drag · corner resize · arrows (+shift fast, +alt size)</span><button id="closeScreen" class="btn ghost">✕</button></div>
     <div id="stageWrap"><div id="stage"></div></div>
   </div>
 </div>
@@ -117,6 +110,7 @@
 <script src="/shared/marked.min.js"></script>
 <script src="/shared/purify.min.js"></script>
 <script src="/shared/link.js"></script>
+<script src="/shared/fonts.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

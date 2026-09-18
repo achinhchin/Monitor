@@ -141,8 +141,10 @@ func redirect(to string) http.HandlerFunc {
 
 func noCache(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/shared/") {
-			w.Header().Set("Cache-Control", "no-cache")
+		if strings.HasPrefix(r.URL.Path, "/shared/fonts/") {
+			w.Header().Set("Cache-Control", "public, max-age=604800")
+		} else {
+			w.Header().Set("Cache-Control", "no-store") // always serve the current build
 		}
 		h.ServeHTTP(w, r)
 	})

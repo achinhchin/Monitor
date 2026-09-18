@@ -1,114 +1,131 @@
 # Project Structure
 
 A Go server on **port 3000** serves two web apps and one WebSocket hub:
-- **Control** (`/control/`): edits markdown notes, positions them on the monitor, and forces season, time, rain and sound.
-- **Monitor** (`/monitor/`): an animated pastel four-season landscape on a canvas, with ambient Web Audio and the notes drawn on top.
+- **Control** (`/control/`) runs on any number of devices, at any screen size. It manages screens, notes and clocks, their per-screen layouts, time, seasons, weather and knobs.
+- **Monitor** (`/monitor/?screen=<id>`) can run on many screens at once. Each one draws a Ghibli-style animated scene (meadow, forest, mountain, beach or city) with creatures, sound, and the notes and clocks placed for that screen.
 
-The server owns all state. Clients render it and send intents.
+The server owns all shared state. Monitors render it; controls send intents. The creatures, particles and random details are simulated locally on each monitor, so screens show the same "overview" of time, season and weather without being pixel-identical.
 
 ```
-main.go            flags, http/https prompt, routes, embeds web/, graceful shutdown
-hub.go             state (notes + env), virtual clock, auto rain, WS clients, persistence
-go.mod / go.sum    only dep: github.com/gorilla/websocket
-certs/             cert.pem + key.pem for https mode (not included)
-data/state.json    created at runtime: notes + env, saved every ~2s when changed and every 30s for the clock
-web/               embedded into the binary via go:embed (rebuild after editing!)
-  index.html       landing page with links
+main.go            flags, http/https prompt, routes, go:embed web/, graceful shutdown
+hub.go             state: items, screens, env · virtual clock · Markov weather · clock alarms · WS hub · persistence
+data/state.json    runtime state (gitignored)
+certs/             cert.pem + key.pem for https (gitignored)
+web/               embedded into the binary (rebuild after editing!)
+  index.html       landing page
   shared/
-    link.js        Link class: reconnecting WS + liveness watchdog; renderMarkdown() (marked + DOMPurify); escapeHTML()
-    fonts.css      "Blex Mono" stack: local BlexMono Nerd Font first, bundled IBM Plex Mono woff2 as fallback -> var(--mono)
-    marked.min.js, purify.min.js, fonts/*.woff2   vendored, so it works offline
-  control/
-    index.html     layout: top status bar | notes list | editor (split/edit/preview) | position + environment + status cards | #modal virtual screen
-    style.css      glass UI (backdrop-filter), light/dark via prefers-color-scheme
-    app.js         all control logic (see below)
+    link.js        Link(role, handlers, query): reconnecting WS + 6s liveness watchdog; renderMarkdown(); escapeHTML()
+    fonts.js       FONTS {id:[label, css stack]}, FONT_CSS (Google Fonts URL), CLOCK_STYLES, fontCss(id)
+    fonts.css      local Blex Mono → bundled IBM Plex Mono (var(--mono))
+    marked.min.js, purify.min.js, fonts/*.woff2   vendored
+  control/         index.html · style.css (responsive: 3 → 2 → 1 columns at 1200/760px) · app.js
   monitor/
-    index.html     <canvas id=sky>, #notes layer, #hud, #off (reconnecting badge), #sound (tap to enable audio), #fs (fullscreen button)
-    style.css      glass notes; night-adaptive colors come from CSS vars --nbg/--nfg/--ndim/--nline set by app.js
-    scene.js       class Scene: canvas renderer
-    audio.js       class Ambience: procedural Web Audio
-    app.js         glue: Link <-> Scene/Ambience/notes DOM
+    world.js       U utils, SEASONS palettes, SKY keyframes, class World (engine)
+    scenes.js      World helpers (blades/grass/flowers/hit) + SCENES {meadow, forest, mountain, beach, city}
+    life.js        SP species table + class Life (creature AI, taps) + DRAW per species
+    audio.js       class Ambience: beds per scene, weather, pad, animal calls, alarm
+    app.js         glue: Link, items (notes/clocks), render loop, adaptive quality, battery, fullscreen, taps
 ```
 
 ## Run
 ```
-go build -o monitor . && ./monitor            # asks: 1) HTTP  2) HTTPS
+go build -o monitor . && ./monitor         # asks 1) HTTP 2) HTTPS
 ./monitor -mode http|https -addr :3000 -cert ./certs/cert.pem -key ./certs/key.pem -data ./data/state.json
 ```
-Without a terminal (for example under systemd), the server uses https when the certs exist and http otherwise. At startup it prints the control and monitor URLs for every LAN IP.
+Open `/monitor/?screen=living-room` on each display; without `?screen`, an id is generated and kept in localStorage. Control lives at `/control/`.
 
-## Time model (hub.go)
-- `Env.DayMs` is the virtual ms in a 20-minute cycle: `phase = DayMs/dayLen`, where 0 is sunrise (06:00) and 0.5 is sunset (18:00). The day half and the night half are 10 minutes each.
-- `Env.SeasonMs` covers a 4-hour year: `season = floor(SeasonMs/1h) % 4` (0 spring, 1 summer, 2 autumn, 3 winter).
-- `Hub.Run` ticks every 250ms and advances both clocks by `dt*Speed` unless `TimePaused`. `SeasonLocked` freezes only the season.
-- Auto rain runs on the same virtual clock. `AutoTimerMs` counts down, then `rollRain` toggles: dry for 3–12 min, rain for 1.5–5 min, intensity 0.3–1.
-- `RainMode` can be auto, on or off. When it is on, `RainIntensity` sets the strength.
-- `envView()` builds the broadcast object: the Env fields plus derived `phase, isDay, hour, season, seasonName, seasonProgress, raining, intensity, dayLenMs, seasonLenMs, serverTime`.
-- The env is broadcast to everyone every 1s and immediately after `env.set`.
+## Data model (hub.go)
+- `Screen{id,name,scene,fpsCap,w,h,dpr,online,fps,audio,battery,lastSeen}` is created the first time a monitor connects with that id. Monitors report their size, fps, audio state and battery through `stats`. A second connection with the same screen id **kicks the older one**; different ids coexist.
+- `Item{id,kind:"note"|"clock",title,content,font,fontSize,z,clock?,layouts{screenId: Layout}}`
+  - `Layout{x,y,w,h,on}` stores fractions of that screen's viewport. Every item has one layout per screen: notes default to the bottom right, clocks to the top right.
+  - `Clock{mode: clock|timer|countdown|alarm, display: digital|analog, style, duration, running, startAt, acc, alarm "HH:MM", ringing, ringAt, fired}`. Elapsed time is `acc + (running ? now-startAt : 0)`, using server epoch ms; monitors correct for clock skew with `serverTime`. For an alarm, `running` means armed.
+  - `checkClocks` runs every second: a finished countdown or a matching alarm time (in **server local time**) sets `ringing`, which clears itself after 3 minutes or when dismissed.
+- `Env{dayMs, yearMs, dayMin, nightMin, seasonMin[4], paused, speed, seasonLocked, weatherMode, knobs{animals,rain,wind,volume}, muted, showHud, w}`
+  - The day cycle is `dayMin + nightMin` minutes. The phase is stretched so 0 is sunrise and .5 is sunset, which makes day and night last different lengths. Seasons use `seasonMin[i]` each. Changing any of these lengths keeps the current phase and season position.
+  - Weather `w{state, intensity, cloud, left}` is a Markov chain running on virtual time: clear → cloudy → rain ⇄ storm. The `rain` knob biases it toward wet weather. Setting `weatherMode` to anything other than auto fixes the weather.
+  - `knobDefs` holds the knob defaults and is sent to clients for the ↺ reset buttons.
+- The env view is broadcast every 1s and after every change. It includes the derived fields `phase, isDay, hour, season, seasonProgress, seasonLeftMs, weather (effective), cycleMs, serverTime, knobDefs`.
 
-## Notes
-`Note{id,title,content,enabled,x,y,w,h,fontSize,z,created,updated}`
-- `x, y, w, h` are **fractions (0..1) of the monitor viewport**, so notes keep their layout on any screen size. `clampNote` keeps each note fully on screen.
-- A new note is enabled and placed at the bottom right (`w=.26 h=.3`).
-- `fontSize` is in monitor CSS px. `z` is the stacking order, raised by `note.front`.
-
-## WebSocket protocol (`/ws?role=control|monitor`, JSON)
-Client → server:
+## WebSocket protocol (`/ws?role=control` | `/ws?role=monitor&screen=<id>`)
+Client → server (`type`, fields):
 | type | fields | who |
 |---|---|---|
-| `ping` | – | both (every 4s) |
-| `screen` | `screen:{w,h,dpr}` | monitor (on open and resize) |
-| `stats` | `fps, audio` | monitor (every 3s) |
-| `note.create` | `title, content` | control |
-| `note.update` | `id, patch:{title?,content?,enabled?,x?,y?,w?,h?,fontSize?}` | control |
-| `note.front` / `note.delete` | `id` | control |
-| `env.set` | `patch:{timePaused?,speed?,seasonLocked?,season?(jump),hour?(jump 0-24),rainMode?,rainIntensity?,volume?,muted?,showHud?,rerollRain?}` | control |
+| `ping` | – | both |
+| `stats` | `patch:{w,h,dpr,fps,audio,battery}` | monitor |
+| `item.create` | `kind` | control |
+| `item.update` | `id, patch` (JSON merge into the Item; the `clock` sub-object merges too) | control |
+| `item.front` / `item.delete` | `id` | control |
+| `layout.set` | `id, screen` (`"*"` = all screens), `patch:{x,y,w,h,on}` | control |
+| `clock.act` | `id, act: start\|pause\|reset\|dismiss` | control |
+| `env.set` | `patch`: any Env field, plus `season` (jump), `hour` (jump), `reroll` | control |
+| `screen.update` | `screen, patch:{name,scene,fpsCap}` | control |
+| `screen.delete` | `screen` (offline only; also drops its layouts) | control |
 
-Server → client:
-| type | fields |
-|---|---|
-| `welcome` | `id, role, notes[], env, clients[]` (full snapshot on connect) |
-| `note.upsert` | `note, by` (sender id), `created?` |
-| `note.remove` | `id, by` |
-| `env` | `env` (EnvView) |
-| `clients` | `clients[]{id,role,addr,ua,since,screen?,fps,audio}` (sent to controls only) |
-| `kicked` | `reason` (to the old monitor when a newer one connects) |
-| `pong` | `t` |
+Server → client: `welcome{id,items,screens,env}`, `item.upsert{item,by}`, `item.remove{id}`, `env{env}`, `screens{screens}`, `kicked`, `pong`.
 
-## Single monitor rule
-There can be any number of controls but only **one monitor**. When a new monitor connects, `ServeWS` sends every existing monitor `{"type":"kicked"}`, removes it from the hub and closes it; the newest one wins. The kicked page calls `link.stop()` (so it doesn't reconnect) and `amb.stop()`, then shows the `#kicked` overlay, whose "take over again" button reloads the page.
+Cleanup works like before. The server uses a 30s read deadline and pings every 10s; on an error it runs `remove()`, which closes the send channel and marks the screen offline. A client whose send buffer is full gets dropped. Clients reconnect with backoff after 6s of silence, and `Link.stop()` runs on `pagehide` and when kicked.
 
-## Connection lifecycle and cleanup
-- Server: `readPump` sets a 30s read deadline that is extended by any message or pong, and the write pump pings every 10s. On a timeout or error, `remove()` deletes the client, closes `send` (which stops `writePump`, and that closes the socket) and rebroadcasts `clients`. A client that is too slow (its 64-message `send` buffer is full) gets its connection closed. `Shutdown` sends close frames and saves state.
-- Client (`link.js`): if nothing arrives for 6s (the server sends env every 1s), `drop()` clears the timers, detaches the handlers, closes the socket and reconnects with backoff. Messages sent while offline are queued (50 max, pings and stats excluded). `pagehide` stops everything.
+## Monitor engine (world.js)
+- **Performance**:
+  - The sky and the static landscape are drawn into two offscreen caches, which are rebuilt only when the quantized light, season, weather or size changes (at most every 350ms) and crossfade over 800ms.
+  - Each frame draws those two caches plus the dynamic parts: sun/moon sprites, pre-tinted cloud sprites, water, grass, hero trees, creatures and particles.
+  - Paths are batched per color, `ctx.filter` and `shadowBlur` are never used, and the canvas is opaque (`alpha:false`).
+  - Grain, vignette and lightning flashes are CSS layers.
+  - In `app.js`, the frame cost is measured. Render resolution drops in steps from 1 to 0.5 when a frame costs more than 55% of the frame budget, and glass blur is disabled (`body.lite`) below 0.75. The per-screen `fpsCap` skips frames; otherwise the loop runs at the display's refresh rate (120/144Hz+). A frame measured about 1ms of JS at 1440p.
+- `state()` extrapolates the server clock locally and eases the phase, palette, cloud cover, rain and storm toward the target, so jumps from the control animate smoothly. It returns `st{t,dt,hour,day,light,night,golden,cloud,rain,storm,snow,wind,sky[3],pal,si,blend,kn,W,H,k}`.
+- `SEASONS` holds colors plus weights (`snow, bare, petals, leaves, fireflies, pollen, flowers, bloom`) that are crossfaded in the last 8% of a season. The weights drive tree looks, particles and creature activity.
+- `shade(color, depth)` applies aerial perspective, golden hour, overcast and night tint. `col/pc/hx` are memoized per cache build.
+- Drawing helpers: `ridge/ry/fillRidge/vgrad/tree(type: round|pine|palm|poplar|bloom)/house`, `blades/grass/flowers` (scenes.js).
+- Particles (rain, snow, petals, leaves, fireflies, pollen) and ripples; lightning adds a bolt, a CSS flash and thunder.
+- Taps: `world.tap(x,y)` tries creatures first (`life.tap`), then scene objects (`scene.tap`), then a generic reaction (burst, ripple, startle nearby animals, chime).
 
-## control/app.js
-- `notes` Map, `sel` (the selected id), `env`, `clients`. `screen()` returns the most recently connected monitor's size, or 1920×1080 by default.
-- `patch(id, p)` updates the note locally and sends `note.update`. Text edits are throttled to 120ms. Incoming upserts don't overwrite the field you have focused.
-- Position controls: fast and fine arrow pads (hold to repeat). Steps are in **monitor px** (`#fastStep`, `#fineStep`) and are converted to fractions. There are x/y/w/h px inputs and snap buttons.
-- The virtual screen (`#modal` → `#stage`) is a rectangle with the monitor's aspect ratio. Notes appear as `.vn` boxes: drag to move, drag the `.rz` corner to resize (sent every 30ms). Keyboard: arrows move, Shift moves fast, Alt resizes.
-- The environment card maps its controls directly to `env.set`. `renderStatus()` shows the season countdown, time, weather, auto-rain timer, sound, control count, and each monitor's size, fps and audio state.
+## Scenes (scenes.js)
+Each scene object has `horizon, fireflies?, amb, life{species: baseCount}` and implements:
+- `init(S, rng)`: deterministic geometry. It sets `gt(x)`/`gb` (the ground band creatures walk in), `floor`, `perches[]`, and `water{ell|rect, surf}`.
+- `build(g,S,rng,st)`: the static layer, cached.
+- `fg(g,S,st)`: the dynamic layer each frame.
+- `front?` (grass in front of creatures), `emit?` (where leaves and petals fall from), and `tap?(S,x,y)` (returns true when handled).
 
-## monitor/scene.js (Scene)
-- `setEnv(e)` stores the snapshot and a timestamp. `frame(now, dt)` extrapolates the clocks locally and **eases** the visible phase, palette and rain toward the target, so control jumps animate smoothly. It returns a state object `{hour, day, light, night, rain, snow, wind, pal, season}` that the audio uses.
-- `PAL[4]` holds the season palettes: colors plus numeric weights (`bare, snow, petals, leaves, fireflies, pollen, snowfall, wind`). `lerpPal` crossfades them during the last 7% of a season, and the weights drive particle rates, so transitions are continuous.
-- `SKY` holds keyframes by hour (top/mid/horizon colors). `shade()` darkens land colors for night and rain.
-- Draw order: sky, stars, sun/moon + glow, clouds (drawn on a separate layer, then tinted with source-atop), 3 hills with mist bands, trees (pine or round, with bare branches and snow driven by the palette), a lake (mirrored hills, sun/moon reflection, shimmer), particles (rain, snow, petals, leaves, fireflies, pollen, lake ripples), fog, storm tint, lightning flash (`onThunder` callback), vignette, grain.
-- In winter, precipitation falls as snow (`pal.snow`).
-- Everything is built in `resize()`, which runs automatically when the canvas size changes. It doesn't use `ctx.filter`, because Safari doesn't support it; soft shapes come from `puff()` radial gradients.
+Interactive objects:
+- **meadow**: hero tree (shakes, leaves fall, birds flush out), lake (ripples, fish come and jump).
+- **forest**: mushrooms (bounce, spores, spirits gather), big trunks (knock, leaves fall, birds flush out).
+- **mountain**: waterfall (mist and splash), lone tree, peaks (echo, birds take off).
+- **beach**: palms (rustle), sea (fish jump, sometimes a whale spouts), shore (wave foam).
+- **city**: windows (toggle their light, `S.ver++` rebuilds the cache), lamps (flicker), clock tower (bells), tram (bell).
 
-## monitor/audio.js (Ambience)
-- `start()` must follow a user gesture, unless the browser is a kiosk with an autoplay flag. The graph: master → compressor → out, plus a convolver reverb send.
-- Continuous layers: rain (hp/lp pink noise), rumble, wind (bandpass sweep), and a 4-voice pad whose chords are per season (`CHORDS`).
-- Random events in `update(st, dt)`: wind chimes (pentatonic), birds (daytime spring/summer), crickets (night, weighted by `fireflies`), droplet plinks while raining, thunder (triggered by the scene).
-- Volume and mute come from the env. `stop()` closes the AudioContext on `pagehide`.
+## Creatures (life.js)
+- In `SP[species]`, `hab` is g (ground), a (air), w (water) or p (perch), alongside `size`, `sh` (shadow), `h` (height), `sp` [walk, run] px/s, `cols`, `fear`, `prey`, `friends`, `call` (a sound name), `tap` (list of possible reactions), `mate`, `hop`, `burrow`, `flock`, `lands`, `glide`, `circle`, `flutter`, and `act(st)`, which gives activity by time of day, weather and season. Every prey's `fear` list automatically includes its predators.
+- **Population**: `census()` runs every second and targets `round(base × animals knob × 2 × act(st))` for each species. Animals enter from the screen edges, fly in or fade in, and leave by walking off, flying away or hiding in a burrow.
+- **Social tick** (every 0.3s):
+  - flee from a threat (burrowers may hide);
+  - predators stalk and pounce on ground prey, while air hunters dive — rabbits, marmots and squirrels for hawks, fish for gulls, with a 25–30% catch chance and the prey vanishing gently;
+  - mates court with ♥, then walk together, and in spring or summer a baby may follow its parent and grow up;
+  - friends greet each other with ♪ or !.
+- **Air**: steering toward a target, flock alignment, landing on the ground or on perches, and taking off when scared. Hawks circle; butterflies flutter.
+- **Water**: fish swim and jump (splash and ripples) and come to lures. The whale cycles deep → surf (spout) → tail.
+- **Taps**: each tap picks a random reaction from `tap`. Over-tapping (more than 3 taps in 5s) makes the animal flee. Reactions are `flee, fly, hop, look, heart, roll, spin, hide, rattle, jump, spout`, plus call sounds.
+- **Drawing**: `DRAW[sp](g,a,st,C,S)` draws in local units, facing +x with feet at y=0. The transform adds direction, scale, spin, jump and roll. Emotes float above the animal's head.
 
-## monitor/app.js
-- `upsert` keeps one `.note` div per enabled note, positioned with `%` left/top/width/height, a `z-index` and a markdown body (re-rendered only when the content changes). Disabled or removed notes fade out.
-- It sends `screen` on open and on resize (debounced 200ms), and `stats` every 3s. It sets the night-adaptive CSS vars and the HUD clock twice a second.
-- Fullscreen: the `#fs` button (bottom right) appears when the mouse moves or the screen is touched and hides again after 2.5s along with the cursor. Double-click or the `f` key also toggle fullscreen, with webkit fallbacks for Safari. A wake lock keeps the screen on.
+## Audio (audio.js)
+- `BEDS[scene]` sets the levels of the noise beds (wind, waves, city, leaves, water). Rain, rumble, pad chords (per season), chimes, crickets and raindrops are added on top.
+- `call(name, pan, vol)` synthesizes the animal and object sounds: chirp, coo, gull, screech, hoot, croak, meow, bark, bleat, yip, squeak, whistle, rattle, click, splash, whale, thunder, rustle, boing, knock, bell, echo, wave, chime, alarm. Each is panned to the source's x position and capped at 40 voices.
+- `start()` needs a user gesture, except in kiosk mode with `--autoplay-policy=no-user-gesture-required`.
+
+## Monitor app.js
+- **Screen id**: `?screen=` or localStorage.
+- **Items**: `upsert` renders the item only if `layouts[SID].on`. A note is glass-styled markdown. A clock is digital (auto-fit with container units) or analog (SVG, monotonic hand angles, a progress arc for countdowns, an alarm hand) in one of the styles `glass|minimal|paper|neon|retro|mono|pastel`, with a font from `FONTS`. Text scales with `--sc = min(W,H)/800`. Ringing clocks shake and chime.
+- **Other**: the battery (`navigator.getBattery`) shows at the top right and goes to the control. The page goes fullscreen automatically on load or the first gesture, unless the user exited it. There is also a wake lock, cursor auto-hide, and night-adaptive CSS variables.
+
+## Control app.js
+- **Screens card**: select, rename, scene, fps cap, copy link, forget, open a new one.
+- **Items card**: add a note or clock, and toggle visibility on the selected screen.
+- **Editor**: title, font, size, and markdown split/edit/preview. For clocks: mode, display, style chips, duration, alarm and armed, start/pause/reset/stop, and a live readout.
+- **Layout card**: works on the selected screen. It has fast/fine/size pads (hold to repeat), px inputs, snaps, "all screens", and the ⛶ virtual screen (drag to move, drag the corner to resize, arrow keys).
+- **Environment card**: time slider and presets, pause/speed, day and night minutes, season jumps, lock and lengths, weather mode and 🎲, **knobs** (drag, wheel or arrow keys; double-click or ↺ resets to the default), mute, HUD.
+- **Status card**: season and time countdowns, the next weather change, and each screen's size, fps, sound and battery.
 
 ## Editing tips
-- After changing anything in `web/`, rebuild the binary, because the files are embedded.
-- To add a new env control: add a field to `Env` and `EnvPatch`, handle it in `applyEnv` (hub.go), add a UI element and handler to the control's `app.js`/`index.html`, then read `env.<field>` in the monitor's `setEnv`.
-- To add a new note field: add it to `Note`, `NotePatch` and `applyNote`, then handle it in the control's editor and the monitor's `upsert`.
+- Rebuild after editing `web/`, because the files are embedded.
+- **New scene**: add an object to `SCENES`, a `BEDS` entry in audio.js, the name to the `scenes` map in hub.go, and an `<option>` in the control.
+- **New species**: add an `SP` entry and a `DRAW` function, then list the species in a scene's `life`.
+- **New env field**: add it to `Env` and `fixEnv` in hub.go and to the control's UI and `setEnv`, then read it from `st.kn` or `env.env` on the monitor.
