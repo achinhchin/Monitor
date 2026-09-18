@@ -7,6 +7,7 @@ document.head.appendChild(Object.assign(document.createElement("link"), { rel: "
 
 const world = new World($("#sky")), amb = new Ambience(), els = new Map(), items = new Map();
 world.life = new Life(world);
+const grain = new Grain($("#grain")); if (!grain.gl) document.body.classList.add("nogl");
 const SEASON = ["🌸 spring", "☀ summer", "🍂 autumn", "❄ winter"], WX = { clear: "", cloudy: "☁", rain: "☂ rain", storm: "⛈ storm" };
 const pad = (n, l = 2) => String(Math.floor(n)).padStart(l, "0");
 const hhmm = (h) => `${pad(h)}:${pad((h % 1) * 60)}`;
@@ -107,6 +108,7 @@ world.onFlash = () => { const f = $("#flash"); f.style.transition = "none"; f.st
 let last = performance.now(), frames = 0, fpsT = 0, themeT = 0, cost = 4, gap = 16.7, qT = 0, q = 1;
 function loop(now) {
   requestAnimationFrame(loop);
+  grain.frame(now);
   const cap = me.fpsCap || 0, dtms = now - last;
   if (cap && dtms < 1000 / cap - 1.5) return;
   gap += (dtms - gap) * .05; last = now;
@@ -125,6 +127,7 @@ function loop(now) {
     const n = st.night, r = document.documentElement.style;
     r.setProperty("--nbg", `rgba(${255 - n * 200 | 0},${255 - n * 200 | 0},${255 - n * 170 | 0},${.34 - n * .1})`);
     r.setProperty("--nfg", n > .5 ? "#eeeaff" : "#2c2a3e"); r.setProperty("--ndim", n > .5 ? "rgba(238,234,255,.6)" : "rgba(44,42,62,.6)"); r.setProperty("--nline", `rgba(255,255,255,${.45 - n * .3})`);
+    r.setProperty("--leak", (st.golden * .9 * (1 - st.cloud * .6)).toFixed(2)); if (world.body) r.setProperty("--lx", (world.body.x / world.W * 100).toFixed(1) + "%");
   }
 }
 requestAnimationFrame(loop);

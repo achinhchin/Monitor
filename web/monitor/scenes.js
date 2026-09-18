@@ -23,6 +23,16 @@ World.prototype.flowers = function (g, list, d = 0) {
   for (const [x, y, v, s] of list) if (v < P.flowers) { const p = a[v * 7 & 1], r = (1.5 + s * 2) * this.k; p.moveTo(x + r, y); p.arc(x, y, r, 0, TAU); }
   g.fillStyle = this.pc("fl1", d); g.fill(a[0]); g.fillStyle = this.pc("fl2", d); g.fill(a[1]);
 };
+// painterly brush dabs (cached with the static layer) and sunlit ridge rims
+World.prototype.dabs = function (g, r, n, pos, cols, sz, d = 0, a = .22) {
+  for (let i = 0; i < n; i++) { const [x, y] = pos(r), c = cols[i % cols.length], w = sz * (.5 + r()) * this.k; g.fillStyle = this.col(c, d, a * (.5 + r() * .8)); g.beginPath(); g.ellipse(x, y, w, w * (.25 + r() * .2), (r() - .5) * .5, 0, TAU); g.fill(); }
+};
+World.prototype.rim = function (g, ys, c, d = 0) {
+  const st = this.st; g.strokeStyle = this.col(c, d, .55 * st.light + .1); g.lineWidth = 2.2 * this.k; g.lineCap = "round";
+  g.beginPath(); for (let i = 0; i < ys.length; i++) g.lineTo(i * ys.step, ys[i] + 1.2 * this.k); g.stroke();
+};
+const lighter = (c, t = .35) => mix(c, [255, 250, 225], t), darker = (c, t = .25) => mix(c, [40, 60, 70], t);
+const onRidge = (S, ys, depth) => (r) => { const x = r() * S.W, y0 = S.ry(ys, x); return [x, y0 + r() * depth]; };
 const scatter = (S, r, n, top, bottom) => Array.from({ length: n | 0 }, () => { const x = r() * S.W, y0 = top(x); return [x, y0 + (bottom - y0) * Math.pow(r(), .7), r(), r()]; });
 const shakeTree = (S, o, x, y) => { o.shake = 1; const P = S.pal; S.burst(P.snow > .5 ? "snow" : P.petals > .3 ? "petal" : "leaf", x, y, 10 + R() * 10 | 0); S.snd("rustle", x, 1); S.life && S.life.flush(x, y, 250 * S.k); };
 const swayOf = (S, o, st, x) => { o.shake = Math.max(0, (o.shake || 0) - st.dt * .8); return (Math.sin(st.t * 1.1 + x * .01) * (1 + st.wind * 3) + o.shake * Math.sin(st.t * 22) * 9) * S.k; };
@@ -50,6 +60,7 @@ const meadow = {
     S.fillRidge(g, this.far, S.vgrad(g, H * .3, H * .55, S.pc("far", .45), S.pc("far", .6)));
     if (S.pal.snow < .5) { g.save(); S.fillRidge(g, this.far, "rgba(0,0,0,0)"); g.clip(); g.fillStyle = S.hx("#ffffff", .5, .75); g.beginPath(); for (let x = 0; x <= W; x += 12) g.lineTo(x, H * .41 + Math.sin(x * .05) * 6 * k); g.lineTo(W, 0); g.lineTo(0, 0); g.fill(); g.restore(); }
     S.fillRidge(g, this.mid, S.vgrad(g, H * .52, H * .7, S.pc("g2", .32), S.pc("g3", .25)));
+    S.dabs(g, r, W / 6, onRidge(S, this.mid, H * .08), [lighter(S.pal.g1), darker(S.pal.g3)], 22, .3); S.rim(g, this.mid, lighter(S.pal.g1, .5), .3);
     S.house(g, this.house[0], this.house[1], 46 * k, 30 * k, "#f4ead8", "#c9584a", .25, st.night, r);
     for (const [x, y, sz, t] of this.trees) S.tree(g, x, y, sz, t, .3);
     g.save(); g.beginPath(); g.ellipse(L.cx, L.cy, L.rx, L.ry, 0, 0, TAU); g.clip();
@@ -57,6 +68,7 @@ const meadow = {
     g.fillStyle = S.vgrad(g, L.cy - L.ry, L.cy + L.ry, css(mix(st.sky[2], wl, .35)), css(mix(st.sky[1], wl, .7))); g.fillRect(L.cx - L.rx, L.cy - L.ry, L.rx * 2, L.ry * 2);
     g.restore();
     S.fillRidge(g, this.near, S.vgrad(g, H * .7, H, S.pc("g1"), S.pc("g3")));
+    S.dabs(g, r, W * H / 3500, onRidge(S, this.near, H * .28), [lighter(S.pal.g1, .45), S.pal.g1, darker(S.pal.g2)], 26, 0, .2); S.rim(g, this.near, lighter(S.pal.g1, .6));
     for (let i = 0; i < 9; i++) { g.fillStyle = S.pc(i % 2 ? "g1" : "g3", 0, .28); g.beginPath(); g.ellipse(r() * W, H * (.8 + r() * .18), (80 + r() * 200) * k, (14 + r() * 26) * k, 0, 0, TAU); g.fill(); }
     g.strokeStyle = S.hx("#e2cfa0", 0, .75 * (1 - S.pal.snow * .6)); g.lineWidth = 26 * k; g.lineCap = "round";
     g.beginPath(); g.moveTo(W * .56, H + 20); g.bezierCurveTo(W * .6, H * .9, W * .5, H * .82, W * .47, H * .745); g.stroke();
@@ -107,6 +119,7 @@ const forest = {
     for (let x = -40; x < W + 40; x += 34 * k) { const y = S.ry(this.canopy, clamp(x, 0, W)); for (const [c, dy, s] of [["l3", 0, 1], ["l2", -8, .8], ["l1", -16, .5]]) { g.fillStyle = S.pc(c, .2); g.beginPath(); g.arc(x + r() * 10, y + dy * k + r() * 8 * k, 26 * k * s * (.7 + r() * .6), 0, TAU); g.fill(); } }
     for (let i = 0; i < W / 30; i++) { const x = r() * W, y = S.ry(this.canopy, x); g.strokeStyle = S.pc("l2", .2, .8); g.lineWidth = 2 * k; g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + 6 * k, y + 30 * k, x, y + (30 + r() * 60) * k); g.stroke(); }
     S.fillRidge(g, this.ground, S.vgrad(g, H * .75, H, S.pc("g2"), S.pc("g3")));
+    S.dabs(g, r, W * H / 4000, onRidge(S, this.ground, H * .22), [lighter(S.pal.g1, .4), darker(S.pal.g3), S.pal.g1], 24, 0, .22); S.rim(g, this.ground, lighter(S.pal.g1, .5));
     for (let i = 0; i < 10; i++) { g.fillStyle = S.pc(i % 2 ? "g1" : "g3", 0, .3); g.beginPath(); g.ellipse(r() * W, H * (.82 + r() * .15), (60 + r() * 140) * k, (10 + r() * 18) * k, 0, 0, TAU); g.fill(); }
     for (const [x, w] of this.big) {
       g.fillStyle = S.pc("trunk", .05); g.beginPath(); g.moveTo(x - w * 1.3, H * .86); g.quadraticCurveTo(x - w * .5, H * .7, x - w * .5, 0); g.lineTo(x + w * .5, 0); g.quadraticCurveTo(x + w * .5, H * .7, x + w * 1.3, H * .86); g.fill();
@@ -171,7 +184,9 @@ const mountain = {
     g.globalAlpha = .9; for (const [x, y, s] of this.pines) S.tree(g, x, y, s, "pine", .28); g.globalAlpha = 1;
     const f = this.fall, w = f.w; g.fillStyle = S.col(mix(S.pal.rock, [60, 60, 80], .25), .15); g.beginPath(); g.moveTo(f.x - w * 3.4, f.y1 + 6 * k); g.lineTo(f.x - w * 2.2, f.y0 + 20 * k); g.lineTo(f.x - w * 1.2, f.y0 - 12 * k); g.lineTo(f.x + w * 1.4, f.y0 - 16 * k); g.lineTo(f.x + w * 2.4, f.y0 + 30 * k); g.lineTo(f.x + w * 3.6, f.y1 + 6 * k); g.fill();
     g.fillStyle = S.pc("g3", .15, .8); for (let i = 0; i < 6; i++) { g.beginPath(); g.ellipse(f.x + (r() - .5) * w * 5, f.y0 + r() * (f.y1 - f.y0), w * .5, w * .25, 0, 0, TAU); g.fill(); }
+    S.dabs(g, r, W / 5, onRidge(S, this.mid, H * .2), [lighter(S.pal.rock, .3), darker(S.pal.rock, .2)], 18, .3, .18);
     S.fillRidge(g, this.near, S.vgrad(g, H * .72, H, S.pc("g1"), S.pc("g3")));
+    S.dabs(g, r, W * H / 3500, onRidge(S, this.near, H * .24), [lighter(S.pal.g1, .45), S.pal.g1, darker(S.pal.g2)], 26, 0, .2); S.rim(g, this.near, lighter(S.pal.g1, .6));
     for (let i = 0; i < 7; i++) { const x = r() * W, y = H * (.8 + r() * .17), s = (8 + r() * 20) * k; g.fillStyle = S.col(S.pal.rock); g.beginPath(); g.ellipse(x, y, s * 1.4, s, 0, Math.PI, 0); g.fill(); g.fillStyle = S.hx("#ffffff", 0, .25); g.beginPath(); g.ellipse(x - s * .3, y - s * .5, s * .5, s * .25, 0, 0, TAU); g.fill(); }
     S.flowers(g, this.fl);
   },
@@ -215,6 +230,7 @@ const beach = {
     const deep = S.col(mix(hex("#2f7fae"), P.water, .3)), shal = S.col(mix(hex("#5fd0cf"), P.water, .25));
     g.fillStyle = S.vgrad(g, hz, H * .76, css(mix(st.sky[2], S.shade(hex("#6aaed0")), .55)), shal); g.fillRect(0, hz, W, H - hz);
     g.fillStyle = deep; g.globalAlpha = .35; g.fillRect(0, hz + (H * .74 - hz) * .15, W, (H * .74 - hz) * .4); g.globalAlpha = 1;
+    S.dabs(g, r, W / 3, (r) => [r() * W, hz + Math.pow(r(), 1.3) * (H * .72 - hz)], [hex("#ffffff"), hex("#2f7fae")], 34, .2, .12);
     const [ix, iy, iw, ih] = this.isl;
     g.fillStyle = S.pc("g3", .5); g.beginPath(); g.ellipse(ix, iy, iw, ih, 0, Math.PI, 0); g.fill();
     for (let i = 0; i < 7; i++) S.tree(g, ix - iw * .6 + i * iw * .2, iy - ih * .3 + Math.abs(i - 3) * ih * .15, 26 * k, "round", .5);
@@ -222,6 +238,7 @@ const beach = {
     g.fillStyle = S.vgrad(g, H * .72, H, S.hx(P.snow > .5 ? "#eef1f6" : "#f4e2b6"), S.hx(P.snow > .5 ? "#d9e0ec" : "#e2c48e"));
     g.beginPath(); g.moveTo(0, H); for (let x = 0; x <= W; x += 8) g.lineTo(x, this.shore(x)); g.lineTo(W, H); g.fill();
     g.fillStyle = S.hx("#c9a878", 0, .35); g.beginPath(); for (let x = 0; x <= W; x += 8) g.lineTo(x, this.shore(x) + 14 * k); for (let x = W; x >= 0; x -= 8) g.lineTo(x, this.shore(x)); g.fill();
+    S.dabs(g, r, W * H / 5000, (r) => { const x = r() * W; return [x, this.shore(x) + 20 * k + r() * H * .24]; }, [hex("#fff6dc"), hex("#d9b27c")], 24, 0, .22);
     for (const [x, y, v] of this.shells) { g.fillStyle = S.hx(v < .3 ? "#f2a08c" : v < .6 ? "#fff4e6" : "#e9c7a2"); g.beginPath(); g.ellipse(x, y, 4 * k, 3 * k, v * 3, 0, TAU); g.fill(); }
     for (let i = 0; i < 4; i++) { const x = r() * W, y = H * (.86 + r() * .1), s = (14 + r() * 22) * k; g.fillStyle = S.col(P.rock); g.beginPath(); g.ellipse(x, y, s * 1.5, s, 0, Math.PI, 0); g.fill(); g.fillStyle = S.pc("l3", 0, .6); g.fillRect(x - s * 1.2, y - 3 * k, s * 2.4, 3 * k); }
   },

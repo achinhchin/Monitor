@@ -21,7 +21,8 @@ web/               embedded into the binary (rebuild after editing!)
     marked.min.js, purify.min.js, fonts/*.woff2   vendored
   control/         index.html · style.css (responsive: 3 → 2 → 1 columns at 1200/760px) · app.js
   monitor/
-    world.js       U utils, SEASONS palettes, SKY keyframes, class World (engine)
+    grain.js       WebGL film grain: new clumpy noise + dust each 24fps film frame, overlay-blended (CSS fallback if no WebGL)
+    world.js       U utils, SEASONS palettes, SKY keyframes, class World (engine), pastel shade(), sunbeams
     scenes.js      World helpers (blades/grass/flowers/hit) + SCENES {meadow, forest, mountain, beach, city}
     life.js        SP species table + class Life (creature AI, taps) + DRAW per species
     audio.js       class Ambience: beds per scene, weather, pad, animal calls, alarm
@@ -83,7 +84,7 @@ Cleanup works like before. The server uses a 30s read deadline and pings every 1
   - In `app.js`, the frame cost is measured. Render resolution drops in steps from 1 to 0.5 when a frame costs more than 55% of the frame budget, and glass blur is disabled (`body.lite`) below 0.75. The per-screen `fpsCap` skips frames; otherwise the loop runs at the display's refresh rate (120/144Hz+). A frame measured about 1ms of JS at 1440p.
 - `state()` extrapolates the server clock locally and eases the phase, palette, cloud cover, rain and storm toward the target, so jumps from the control animate smoothly. It returns `st{t,dt,hour,day,light,night,golden,cloud,rain,storm,snow,wind,sky[3],pal,si,blend,kn,W,H,k}`.
 - `SEASONS` holds colors plus weights (`snow, bare, petals, leaves, fireflies, pollen, flowers, bloom`) that are crossfaded in the last 8% of a season. The weights drive tree looks, particles and creature activity.
-- `shade(color, depth)` applies aerial perspective, golden hour, overcast and night tint. `col/pc/hx` are memoized per cache build.
+- `shade(color, depth)` applies aerial perspective, golden hour, overcast and night tint, then a pastel pass (slight desaturation and a milky lift). `col/pc/hx` are memoized per cache build.
 - Drawing helpers: `ridge/ry/fillRidge/vgrad/tree(type: round|pine|palm|poplar|bloom)/house`, `blades/grass/flowers` (scenes.js).
 - Particles (rain, snow, petals, leaves, fireflies, pollen) and ripples; lightning adds a bolt, a CSS flash and thunder.
 - Taps: `world.tap(x,y)` tries creatures first (`life.tap`), then scene objects (`scene.tap`), then a generic reaction (burst, ripple, startle nearby animals, chime).
@@ -113,6 +114,13 @@ Interactive objects:
 - **Air**: steering toward a target, flock alignment, landing on the ground or on perches, and taking off when scared. Hawks circle; butterflies flutter.
 - **Water**: fish swim and jump (splash and ripples) and come to lures. The whale cycles deep → surf (spout) → tail.
 - **Taps**: each tap picks a random reaction from `tap`. Over-tapping (more than 3 taps in 5s) makes the animal flee. Reactions are `flee, fly, hop, look, heart, roll, spin, hide, rattle, jump, spout`, plus call sounds.
+- **Motion**:
+  - Speed eases in and out (`a.v`), and facing turns smoothly (`a.face`, which shows as a narrowing sprite mid-turn).
+  - Head pose eases (`a.hd`: -.35 alert, 0 up, 1 grazing).
+  - The gait phase `a.an` advances by distance divided by the species `stride`, so feet never slide.
+  - `quad()` is the rig for four-legged animals (deer, fox, dog, cat): legs with a knee solved by 2-bone IK, a 4-beat walk (the foot is on the ground 60% of the cycle), a faster run (45%), body bob, a curved neck and a tail callback.
+  - Rabbits hop with squash and stretch. Birds flap in bursts and glide, and tilt with their vertical speed. Fish swim with a wave that travels along the body.
+  - All animals blink and breathe.
 - **Drawing**: `DRAW[sp](g,a,st,C,S)` draws in local units, facing +x with feet at y=0. The transform adds direction, scale, spin, jump and roll. Emotes float above the animal's head.
 
 ## Audio (audio.js)

@@ -20,7 +20,7 @@ const SEASONS = [
 const lerpPal = (a, b, t) => { const o = {}; for (const k in a) o[k] = Array.isArray(a[k]) ? mix(a[k], b[k], t) : lerp(a[k], b[k], t); return o; };
 // [hour, top, mid, horizon] saturated Ghibli skies
 const SKY = [[0, "#0b1230", "#172554", "#2d3f73"], [4.6, "#0f1838", "#22306a", "#3d4f86"], [5.5, "#28336d", "#6f6aa8", "#f0a8a8"], [6.4, "#4f86cf", "#f3b3a5", "#ffd7a0"], [8, "#3f8fdc", "#86c3ee", "#e3f2fa"], [12, "#2f86dc", "#74bff0", "#d8eefb"], [16, "#3f86d3", "#8cc2ea", "#f1e6d3"], [17.4, "#4e6fc0", "#e79e9e", "#ffc98a"], [18.3, "#2f3b80", "#9a6aa6", "#f28f7a"], [19.2, "#172155", "#2f3a78", "#56507e"], [24, "#0b1230", "#172554", "#2d3f73"]].map(([h, ...c]) => [h, c.map(hex)]);
-const NIGHT = hex("#1a2246"), WARM = hex("#ffb070"), GREY = hex("#8d97ab"), WHITE = [255, 255, 255];
+const NIGHT = hex("#1a2246"), WARM = hex("#ffb070"), GREY = hex("#8d97ab"), WHITE = [255, 255, 255], PASTEL = hex("#fff4ee");
 
 class World {
   constructor(canvas) {
@@ -53,6 +53,8 @@ class World {
     mg.fillStyle = "#f6f3ff"; mg.beginPath(); mg.arc(mc, mc, sr * .8, 0, TAU); mg.fill();
     mg.fillStyle = "rgba(180,180,215,.35)"; [[-.3, -.2, .2], [.2, .25, .13], [-.1, .38, .1]].forEach(([x, y, r]) => { mg.beginPath(); mg.arc(mc + x * sr, mc + y * sr, r * sr, 0, TAU); mg.fill(); });
     mg.globalCompositeOperation = "destination-out"; mg.beginPath(); mg.arc(mc + sr * .45, mc - sr * .2, sr * .74, 0, TAU); mg.fill();
+    const rb = this.ray = cv(128, 512), rg = rb.getContext("2d"), gr = rg.createLinearGradient(0, 0, 0, 512);
+    gr.addColorStop(0, "rgba(255,244,220,0)"); gr.addColorStop(.14, "rgba(255,244,220,.75)"); gr.addColorStop(1, "rgba(255,236,210,0)"); rg.fillStyle = gr; rg.beginPath(); rg.moveTo(56, 0); rg.lineTo(72, 0); rg.lineTo(128, 512); rg.lineTo(0, 512); rg.fill();
     this.glowS = glow(32, [[0, "rgba(255,240,180,1)"], [.25, "rgba(255,230,160,.45)"], [1, "rgba(255,220,140,0)"]]);
     this.clouds = Array.from({ length: 14 }, (_, i) => this.makeCloud(i));
     this.seed = 1 + [...this.name].reduce((a, ch) => a * 31 + ch.charCodeAt(0), 7) % 9999;
@@ -75,7 +77,8 @@ class World {
   shade(c, d = 0) {
     const s = this.st; let o = mix(c, s.sky[2], d * .6);
     o = mix(o, WARM, s.golden * .22); o = mix(o, GREY, s.cloud * .22 + s.rain * .1);
-    return mix(o, NIGHT, s.night * .74);
+    const l = (o[0] + o[1] + o[2]) / 3; o = mix(mix(o, [l, l, l], .1), PASTEL, .12 * (1 - s.night * .7));
+    return mix(o, NIGHT, s.night * .72);
   }
   col(c, d = 0, a = 1) { const key = c + "|" + d + "|" + a; let v = this.memo.get(key); if (!v) this.memo.set(key, (v = css(this.shade(c, d), a))); return v; }
   pc(name, d = 0, a = 1) { return this.col(this.pal[name], d, a); }
@@ -120,7 +123,7 @@ class World {
     this.scene.build(l, this, rng(this.seed), st);
     const fog = l.createLinearGradient(0, H * .45, 0, H); fog.addColorStop(0, css(st.sky[2], 0)); fog.addColorStop(1, css(st.sky[2], st.rain * .3 + st.cloud * .08));
     l.globalCompositeOperation = "source-atop"; l.fillStyle = fog; l.fillRect(0, H * .45, W, H * .55); l.globalCompositeOperation = "source-over";
-    const tint = css(mix(mix(mix(WHITE, WARM, st.golden * .5), GREY, st.cloud * .5 + st.rain * .3), NIGHT, st.night * .8), .85);
+    const tint = css(mix(mix(mix(mix(WHITE, hex("#f3dff0"), .35), WARM, st.golden * .5), GREY, st.cloud * .5 + st.rain * .3), NIGHT, st.night * .8), .85);
     for (const c of this.clouds) { const cg = c.spr.getContext("2d"); cg.globalCompositeOperation = "copy"; cg.drawImage(c.base, 0, 0); cg.globalCompositeOperation = "source-atop"; cg.fillStyle = tint; cg.globalAlpha = .25 + st.night * .6 + st.cloud * .25; cg.fillRect(0, 0, c.spr.width, c.spr.height); cg.globalAlpha = 1; }
   }
 
@@ -159,6 +162,12 @@ class World {
     }
     g.globalAlpha = 1;
     layer(1);
+    const ra = (st.golden * .22 + st.light * .05) * (1 - st.cloud * .85);
+    if (st.day && ra > .01 && this.body) {
+      const { x, y } = this.body, L = Math.hypot(W, H) * .9; g.globalCompositeOperation = "lighter";
+      for (let i = 0; i < 6; i++) { const a = (i - 2.5) * .22 + Math.sin(st.t * .05 + i * 1.7) * .05 + (x < W / 2 ? -.5 : .5) * .6; g.globalAlpha = ra * (.6 + .4 * Math.sin(st.t * .3 + i)); g.setTransform(this.s * Math.cos(a), this.s * Math.sin(a), -this.s * Math.sin(a), this.s * Math.cos(a), x * this.s, y * this.s); g.drawImage(this.ray, -L * .06, 0, L * .12, L); }
+      g.setTransform(this.s, 0, 0, this.s, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = "source-over";
+    }
     this.scene.fg(g, this, st);
     this.life && this.life.frame(g, st);
     this.scene.front && this.scene.front(g, this, st);

@@ -1,9 +1,11 @@
 :root{--nbg:rgba(255,255,255,.34);--nfg:#2c2a3e;--nline:rgba(255,255,255,.45);--ndim:rgba(44,42,62,.6);--sc:1;--ui:clamp(11px,1.4vmin,18px)}
 html,body{margin:0;height:100%;overflow:hidden;background:#1b1a36;font-family:var(--mono);cursor:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;user-select:none}
 body.cur{cursor:default}
-canvas{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+#sky{position:fixed;inset:0;width:100vw;height:100vh;display:block}
 #fx{position:fixed;inset:0;pointer-events:none;overflow:hidden;background:radial-gradient(ellipse at center,transparent 55%,rgba(20,15,40,.38))}
-#fx:after{content:"";position:absolute;inset:-100%;background:var(--grain);will-change:transform;animation:grain .8s steps(1) infinite}
+#grain{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;mix-blend-mode:overlay;opacity:.55;image-rendering:auto}
+body.nogl #fx:after{content:"";position:absolute;inset:-100%;background:var(--grain);will-change:transform;animation:grain .8s steps(1) infinite}
+#leak{position:fixed;inset:0;pointer-events:none;opacity:var(--leak,0);background:radial-gradient(120% 90% at var(--lx,80%) 30%,rgba(255,196,150,.35),rgba(255,170,190,.12) 45%,transparent 70%);mix-blend-mode:soft-light;transition:opacity 2s}
 @keyframes grain{0%{transform:translate(0,0)}12%{transform:translate(-7%,4%)}25%{transform:translate(5%,-9%)}37%{transform:translate(-12%,11%)}50%{transform:translate(9%,6%)}62%{transform:translate(-4%,-13%)}75%{transform:translate(14%,2%)}87%{transform:translate(-9%,-5%)}}
 #flash{position:fixed;inset:0;pointer-events:none;background:#efeaff;opacity:0;transition:opacity .7s ease-out}
 #items{position:fixed;inset:0;pointer-events:none}
