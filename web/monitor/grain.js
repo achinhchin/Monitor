@@ -13,7 +13,7 @@ void main(){
   float n = h(p) * .55 + h(floor(p * .5) + 17.) * .3 + h(floor(p * .25) + 71.) * .15;
   float g = .5 + (n - .5) * amt + fl;
   float d = h(floor(p / 3.) + s * 9.1);
-  if (d > .99965) g += h(p + 3.) > .5 ? .22 : -.22; // dust specks
+  if (d > .99988) g += h(p + 3.) > .5 ? .14 : -.14; // dust specks
   gl_FragColor = vec4(vec3(g), 1.);
 }`;
 const VS = "attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}";
@@ -28,7 +28,7 @@ class Grain {
     gl.useProgram(pr); gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer()); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     const loc = gl.getAttribLocation(pr, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     this.u = Object.fromEntries(["r", "s", "amt", "fl"].map((n) => [n, gl.getUniformLocation(pr, n)]));
-    this.last = 0; this.amt = .22; this.ok = true;
+    this.last = 0; this.amt = .16; this.ok = true;
   }
   frame(now) {
     const gl = this.gl; if (!gl || now - this.last < 41) return; this.last = now;

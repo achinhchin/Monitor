@@ -44,15 +44,15 @@ function upsert(it) {
   const sig = it.kind + (it.clock ? it.clock.display + it.clock.style : "");
   if (!el || el.classList.contains("bye") || el._sig !== sig) {
     if (el) el.remove();
-    el = document.createElement("div"); el._sig = sig; els.set(it.id, el);
+    el = document.createElement("div"); el._sig = sig; el.dataset.id = it.id; els.set(it.id, el);
     if (it.kind === "note") { el.className = "it note glassy"; el.innerHTML = `<div class="t"></div><div class="b"></div>`; }
     else {
       const c = it.clock, st = c.style || "glass"; el.className = `it clk ${c.display} ${st === "glass" ? "glassy" : "s-" + st}`;
-      el.innerHTML = c.display === "analog" ? analogSVG() : `<div class="dg"><div class="big"></div><div class="sub"></div><div class="bar"><i></i></div></div>`;
+      el.innerHTML = c.display === "analog" ? analogSVG() : `<div class="dg"><div class="big"><span class="mn"></span><small></small></div><div class="sub"></div><div class="bar"><i></i></div></div>`;
     }
     $("#items").appendChild(el);
   }
-  Object.assign(el.style, { left: L.x * 100 + "%", top: L.y * 100 + "%", width: L.w * 100 + "%", height: L.h * 100 + "%", zIndex: it.z, fontFamily: fontCss(it.font) });
+  el._L = L; Object.assign(el.style, { zIndex: it.z, fontFamily: fontCss(it.font) });
   el.style.setProperty("--fs", it.fontSize + "px");
   if (it.kind === "note") {
     if (el._t !== it.title) el.firstChild.textContent = el._t = it.title;
@@ -81,19 +81,40 @@ function tickClock(el, it) {
   el.classList.toggle("ring", !!c.ringing);
   if (c.display !== "analog") {
     const b = el.querySelector(".big"), s = el.querySelector(".sub"), bar = el.querySelector(".bar");
-    if (b._v !== d.big) b.innerHTML = b._v = d.big;
+    const [, mn, sm] = d.big.match(/^(.*?)(?:<small>(.*)<\/small>)?$/); roll(b.firstChild, mn); roll(b.lastChild, sm || "");
     const sub = title ? `${title} · ${d.sub}` : d.sub; if (s._v !== sub) s.textContent = s._v = sub;
     bar.style.display = d.bar == null ? "none" : ""; if (d.bar != null) bar.firstChild.style.width = d.bar * 100 + "%";
     return;
   }
-  let h, m, s;
-  // monotonic angles so CSS transitions never spin backwards at :59 → :00
-  const t = d.clock ? now / 1000 - d.clock.getTimezoneOffset() * 60 : d.t / 1000; s = Math.floor(t); m = t / 60; h = t / 3600;
-  const rot = (sel, deg) => { const e = el.querySelector(sel); const v = `rotate(${deg}deg)`; if (e._v !== v) { e.style.transform = v; e.style.transformOrigin = "50px 50px"; e._v = v; } };
-  rot(".h", h * 30); rot(".m", m * 6); rot(".sec", s * 6);
-  const al = el.querySelector(".al"); al.style.display = d.alarm && c.running ? "" : "none"; if (d.alarm) rot(".al", ((d.alarm[0] % 12) + d.alarm[1] / 60) * 30);
+  const al = el.querySelector(".al"); al.style.display = d.alarm && c.running ? "" : "none"; if (d.alarm) rot(el, ".al", ((d.alarm[0] % 12) + d.alarm[1] / 60) * 30);
   el.querySelector(".arc").style.strokeDashoffset = d.bar == null ? 100 : 100 * (1 - d.bar);
   const lbl = el.querySelector(".lbl"), txt = c.mode === "clock" ? title : c.mode === "alarm" ? c.alarm : d.big.replace(/<[^>]+>/g, ""); if (lbl._v !== txt) lbl.textContent = lbl._v = txt;
+}
+const rot = (el, sel, deg) => { const e = el._h?.[sel] || ((el._h ||= {})[sel] = el.querySelector(sel)); e.setAttribute("transform", `rotate(${(deg % 360).toFixed(2)} 50 50)`); };
+// digits that change slide in; alternate animation names to retrigger without reflow
+function roll(box, str) {
+  if (box._v === str) return; const old = box._v || ""; box._v = str;
+  while (box.childNodes.length > str.length) box.lastChild.remove();
+  while (box.childNodes.length < str.length) box.appendChild(document.createElement("span"));
+  [...str].forEach((ch, i) => { const sp = box.childNodes[i]; if (sp.textContent !== ch) { sp.textContent = ch; if (old) sp.className = sp.className === "r1" ? "r2" : "r1"; } });
+}
+function hands(el, it) {
+  const c = it.clock, now = Date.now() + skew;
+  let t; if (c.mode === "clock" || c.mode === "alarm") { const d = new Date(now); t = now / 1000 - d.getTimezoneOffset() * 60; }
+  else { const e = c.acc + (c.running ? now - c.startAt : 0); t = (c.mode === "countdown" ? Math.max(0, c.duration - e) : e) / 1000; }
+  rot(el, ".h", t / 3600 * 30); rot(el, ".m", t / 60 * 6); rot(el, ".sec", t * 6);
+}
+// notes & clocks glide to their layout with a critically-damped follow (no restarted CSS transitions)
+let snap = true;
+function moveItems(dt) {
+  const W = innerWidth, H = innerHeight, k = snap ? 1 : 1 - Math.exp(-dt * 10); snap = false;
+  for (const el of els.values()) {
+    const L = el._L; if (!L) continue;
+    const t = [L.x * W, L.y * H, L.w * W, L.h * H], c = el._pos || (el._pos = t.slice()); let mv = !el._set;
+    for (let i = 0; i < 4; i++) { const d = t[i] - c[i]; if (Math.abs(d) > .15) { c[i] += d * k; mv = true; } else if (d) { c[i] = t[i]; mv = true; } }
+    if (mv) { el._set = 1; el.style.transform = `translate3d(${c[0].toFixed(1)}px,${c[1].toFixed(1)}px,0)`; el.style.width = c[2].toFixed(1) + "px"; el.style.height = c[3].toFixed(1) + "px"; }
+    const it = items.get(el.dataset.id); if (it && it.clock && it.clock.display === "analog") hands(el, it);
+  }
 }
 let ringT = 0;
 setInterval(() => {
@@ -115,6 +136,7 @@ function loop(now) {
   const t0 = performance.now(), st = world.frame(now, Math.min(.1, dtms / 1000));
   cost += (performance.now() - t0 - cost) * .05;
   amb.update(st, world.name);
+  moveItems(dtms / 1000);
   frames++; fpsT += dtms; if (fpsT >= 1000) { fps = frames * 1000 / fpsT; frames = fpsT = 0; }
   if ((qT += dtms) > 2000) {
     qT = 0; const budget = cap ? 1000 / cap : gap;
@@ -134,7 +156,7 @@ requestAnimationFrame(loop);
 setInterval(stats, 5000);
 
 const scaleUI = () => document.documentElement.style.setProperty("--sc", Math.max(.45, Math.min(3, Math.min(innerWidth, innerHeight) / 800)));
-let rt; addEventListener("resize", () => { scaleUI(); clearTimeout(rt); rt = setTimeout(stats, 300); }); scaleUI();
+let rt; addEventListener("resize", () => { snap = true; scaleUI(); clearTimeout(rt); rt = setTimeout(stats, 300); }); scaleUI();
 { const c = document.createElement("canvas"); c.width = c.height = 160; const g = c.getContext("2d"), d = g.createImageData(160, 160); for (let i = 0; i < d.data.length; i += 4) { d.data[i] = d.data[i + 1] = d.data[i + 2] = Math.random() * 255; d.data[i + 3] = 14; } g.putImageData(d, 0, 0); document.documentElement.style.setProperty("--grain", `url(${c.toDataURL()})`); }
 
 // battery (top right)
