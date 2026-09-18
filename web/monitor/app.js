@@ -70,8 +70,15 @@ $("#sound").onclick = enableSound;
 addEventListener("pointerdown", enableSound); addEventListener("keydown", enableSound);
 enableSound(); // works under autoplay-permissive kiosk flags
 
-let idle; addEventListener("mousemove", () => { document.body.classList.add("cur"); clearTimeout(idle); idle = setTimeout(() => document.body.classList.remove("cur"), 2500); });
-addEventListener("dblclick", () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {}));
+let idle; const wakeUi = () => { document.body.classList.add("cur"); clearTimeout(idle); idle = setTimeout(() => document.body.classList.remove("cur"), 2500); };
+addEventListener("mousemove", wakeUi); addEventListener("pointerdown", wakeUi);
+const de = document.documentElement, fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+const toggleFs = () => fsEl() ? (document.exitFullscreen || document.webkitExitFullscreen).call(document) : Promise.resolve((de.requestFullscreen || de.webkitRequestFullscreen).call(de)).catch(() => {});
+const fsLabel = () => ($("#fs").textContent = fsEl() ? "✕ exit fullscreen" : "⛶ fullscreen");
+$("#fs").onclick = (e) => { e.stopPropagation(); toggleFs(); };
+document.addEventListener("fullscreenchange", fsLabel); document.addEventListener("webkitfullscreenchange", fsLabel);
+addEventListener("dblclick", toggleFs);
+addEventListener("keydown", (e) => e.key === "f" && toggleFs());
 const wake = () => navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {});
 wake(); document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && wake());
 addEventListener("pagehide", () => amb.stop());

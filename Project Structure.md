@@ -23,7 +23,7 @@ web/               embedded into the binary via go:embed (rebuild after editing!
     style.css      glass UI (backdrop-filter), light/dark via prefers-color-scheme
     app.js         all control logic (see below)
   monitor/
-    index.html     <canvas id=sky>, #notes layer, #hud, #off (reconnecting badge), #sound (tap to enable audio)
+    index.html     <canvas id=sky>, #notes layer, #hud, #off (reconnecting badge), #sound (tap to enable audio), #fs (fullscreen button)
     style.css      glass notes; night-adaptive colors come from CSS vars --nbg/--nfg/--ndim/--nline set by app.js
     scene.js       class Scene: canvas renderer
     audio.js       class Ambience: procedural Web Audio
@@ -106,7 +106,7 @@ There can be any number of controls but only **one monitor**. When a new monitor
 ## monitor/app.js
 - `upsert` keeps one `.note` div per enabled note, positioned with `%` left/top/width/height, a `z-index` and a markdown body (re-rendered only when the content changes). Disabled or removed notes fade out.
 - It sends `screen` on open and on resize (debounced 200ms), and `stats` every 3s. It sets the night-adaptive CSS vars and the HUD clock twice a second.
-- Other behavior: the cursor hides after 2.5s, double-click toggles fullscreen, and a wake lock keeps the screen on.
+- Fullscreen: the `#fs` button (bottom right) appears when the mouse moves or the screen is touched and hides again after 2.5s along with the cursor. Double-click or the `f` key also toggle fullscreen, with webkit fallbacks for Safari. A wake lock keeps the screen on.
 
 ## Editing tips
 - After changing anything in `web/`, rebuild the binary, because the files are embedded.

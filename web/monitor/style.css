@@ -36,3 +36,6 @@ canvas{position:fixed;inset:0;display:block;width:100vw;height:100vh}
 #kicked[hidden]{display:none}
 #kicked p{margin:0}
 #kicked button{font:13px var(--mono);color:#fff;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.4);padding:10px 20px;border-radius:99px;cursor:pointer}
+#fs{position:fixed;right:18px;bottom:18px;z-index:50;font:12px var(--mono);color:#fff;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.4);padding:8px 14px;border-radius:99px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);cursor:pointer;opacity:0;pointer-events:none;transition:opacity .4s}
+body.cur #fs{opacity:1;pointer-events:auto}
+#fs:hover{background:rgba(255,255,255,.3)}
