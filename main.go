@@ -25,7 +25,8 @@ func main() {
 	addr := flag.String("addr", ":3000", "listen address")
 	cert := flag.String("cert", "./certs/cert.pem", "TLS certificate (https mode)")
 	key := flag.String("key", "./certs/key.pem", "TLS private key (https mode)")
-	data := flag.String("data", "./data/state.json", "file used to persist notes and environment")
+	dbPath := flag.String("db", "./data/monitor.db", "SQLite database for items, screens and environment")
+	legacy := flag.String("data", "./data/state.json", "old JSON state, imported once into an empty database")
 	flag.Parse()
 
 	m := strings.ToLower(strings.TrimSpace(*mode))
@@ -43,7 +44,12 @@ func main() {
 		}
 	}
 
-	hub := NewHub(*data)
+	store, err := OpenStore(*dbPath)
+	if err != nil {
+		log.Fatalf("open database %s: %v", *dbPath, err)
+	}
+	defer store.Close()
+	hub := NewHub(store, *legacy)
 	go hub.Run()
 
 	sub, _ := fs.Sub(webFS, "web")

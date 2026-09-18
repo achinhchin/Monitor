@@ -9,7 +9,6 @@ import (
 	mrand "math/rand/v2"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"sync"
@@ -125,27 +124,27 @@ type persisted struct {
 }
 
 type Hub struct {
-	mu       sync.Mutex
-	clients  map[string]*Client
-	items    map[string]*Item
-	screens  map[string]*Screen
-	env      Env
-	dataPath string
-	dirty    bool
-	quit     chan struct{}
-	up       websocket.Upgrader
+	mu      sync.Mutex
+	clients map[string]*Client
+	items   map[string]*Item
+	screens map[string]*Screen
+	env     Env
+	store   *Store
+	dirty   bool
+	quit    chan struct{}
+	up      websocket.Upgrader
 }
 
-func NewHub(dataPath string) *Hub {
+func NewHub(store *Store, legacyJSON string) *Hub {
 	h := &Hub{
 		clients: map[string]*Client{}, items: map[string]*Item{}, screens: map[string]*Screen{},
-		dataPath: dataPath, quit: make(chan struct{}),
+		store: store, quit: make(chan struct{}),
 		env: Env{DayMin: 10, NightMin: 10, SeasonMin: [4]float64{60, 60, 60, 60}, Speed: 1, WeatherMode: "auto",
 			ShowHud: true, Knobs: map[string]float64{}, W: Weather{State: "clear", Cloud: .3, Left: 5 * minute}},
 		up: websocket.Upgrader{ReadBufferSize: 4096, WriteBufferSize: 4096, CheckOrigin: func(*http.Request) bool { return true }},
 	}
 	h.env.DayMs = h.cycle() * .06
-	h.load()
+	h.load(legacyJSON)
 	for k, v := range knobDefs {
 		if _, ok := h.env.Knobs[k]; !ok {
 			h.env.Knobs[k] = v
@@ -154,14 +153,23 @@ func NewHub(dataPath string) *Hub {
 	return h
 }
 
-func (h *Hub) load() {
-	b, err := os.ReadFile(h.dataPath)
-	if err != nil {
-		return
-	}
+// load reads the database; an empty database imports a legacy state.json once.
+func (h *Hub) load(legacyJSON string) {
 	var p persisted
-	if err := json.Unmarshal(b, &p); err != nil {
-		log.Printf("state unreadable, starting fresh: %v", err)
+	var err error
+	if h.store.Empty() {
+		b, e := os.ReadFile(legacyJSON)
+		if e != nil {
+			return
+		}
+		if err = json.Unmarshal(b, &p); err != nil {
+			log.Printf("legacy %s unreadable: %v", legacyJSON, err)
+			return
+		}
+		log.Printf("importing %s into database", legacyJSON)
+		defer func() { h.save(); _ = os.Rename(legacyJSON, legacyJSON+".imported") }()
+	} else if p, err = h.store.Load(); err != nil {
+		log.Printf("database load failed: %v", err)
 		return
 	}
 	for _, it := range p.Items {
@@ -188,16 +196,21 @@ func (h *Hub) load() {
 
 func (h *Hub) save() {
 	h.mu.Lock()
-	p := persisted{Items: h.sortedItems(), Screens: h.screenList(), Env: h.env}
-	b, err := json.MarshalIndent(p, "", " ")
+	var sn snapshot
+	for _, it := range h.items {
+		sn.items = append(sn.items, row{id: it.ID, a: it.Kind, n: it.Created, data: mustJSON(it)})
+	}
+	for _, s := range h.screens {
+		sn.screens = append(sn.screens, row{id: s.ID, a: s.Name, b: s.Scene, data: mustJSON(s)})
+	}
+	sn.env = mustJSON(h.env)
 	h.dirty = false
 	h.mu.Unlock()
-	if err != nil {
-		return
-	}
-	_ = os.MkdirAll(filepath.Dir(h.dataPath), 0o755)
-	if os.WriteFile(h.dataPath+".tmp", b, 0o644) == nil {
-		_ = os.Rename(h.dataPath+".tmp", h.dataPath)
+	if err := h.store.Save(sn); err != nil {
+		log.Printf("database save failed: %v", err)
+		h.mu.Lock()
+		h.dirty = true
+		h.mu.Unlock()
 	}
 }
 

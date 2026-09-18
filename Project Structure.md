@@ -8,8 +8,9 @@ The server owns all shared state. Monitors render it; controls send intents. The
 
 ```
 main.go            flags, http/https prompt, routes, go:embed web/, graceful shutdown
-hub.go             state: items, screens, env · virtual clock · Markov weather · clock alarms · WS hub · persistence
-data/state.json    runtime state (gitignored)
+hub.go             state: items, screens, env · virtual clock · Markov weather · clock alarms · WS hub
+store.go           SQLite persistence (modernc.org/sqlite, pure Go / no cgo)
+data/monitor.db    runtime database (gitignored)
 certs/             cert.pem + key.pem for https (gitignored)
 web/               embedded into the binary (rebuild after editing!)
   index.html       landing page
@@ -30,9 +31,17 @@ web/               embedded into the binary (rebuild after editing!)
 ## Run
 ```
 go build -o monitor . && ./monitor         # asks 1) HTTP 2) HTTPS
-./monitor -mode http|https -addr :3000 -cert ./certs/cert.pem -key ./certs/key.pem -data ./data/state.json
+./monitor -mode http|https -addr :3000 -cert ./certs/cert.pem -key ./certs/key.pem -db ./data/monitor.db
 ```
 Open `/monitor/?screen=living-room` on each display; without `?screen`, an id is generated and kept in localStorage. Control lives at `/control/`.
+
+## Persistence (store.go)
+The database is SQLite in WAL mode with a single connection. It has three tables:
+- `items(id, kind, created, data)`
+- `screens(id, name, scene, data)`
+- `kv(k, v)`, where `k='env'` holds the Env row
+
+The `data` and `v` columns hold the JSON of the Go structs, so fields can be queried with `json_extract`. The hub marks state dirty on every change. `save()` takes a snapshot under the lock and then writes it outside the lock in one transaction: about every 2s while there are changes, every 30s for the running clock, and on shutdown. When the database is empty on startup, a legacy `-data` state.json is imported once and renamed to `*.imported`.
 
 ## Data model (hub.go)
 - `Screen{id,name,scene,fpsCap,w,h,dpr,online,fps,audio,battery,lastSeen}` is created the first time a monitor connects with that id. Monitors report their size, fps, audio state and battery through `stats`. A second connection with the same screen id **kicks the older one**; different ids coexist.
