@@ -9,6 +9,7 @@ const world = new World($("#sky")), amb = new Ambience(), els = new Map(), items
 world.life = new Life(world);
 const grain = new Grain($("#grain")); if (!grain.gl) document.body.classList.add("nogl");
 const SEASON = ["🌸 spring", "☀ summer", "🍂 autumn", "❄ winter"], WX = { clear: "", cloudy: "☁", rain: "☂ rain", storm: "⛈ storm" };
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), throttle = (fn, ms) => { let t = 0, a; return (...x) => { a = x; if (!t) t = setTimeout(() => { t = 0; fn(...a); }, ms); }; };
 const pad = (n, l = 2) => String(Math.floor(n)).padStart(l, "0");
 const hhmm = (h) => `${pad(h)}:${pad((h % 1) * 60)}`;
 let env = null, me = {}, skew = 0, fps = 0, battery = null;
@@ -27,7 +28,7 @@ const link = new Link("monitor", {
   },
 }, "&screen=" + encodeURIComponent(SID));
 
-function screens(list) { me = list.find((s) => s.id === SID) || me; world.setScene(me.scene || "meadow"); }
+function screens(list) { me = list.find((s) => s.id === SID) || me; world.setScene(me.scene || "meadow"); document.body.classList.toggle("locked", !!me.locked); }
 function setEnv(e) {
   env = e; skew = e.serverTime - Date.now(); world.setEnv(e);
   amb.vol = e.env.knobs.volume; amb.muted = e.env.muted;
@@ -51,13 +52,15 @@ function upsert(it) {
       const c = it.clock, st = c.style || "glass"; el.className = `it clk ${c.display} ${st === "glass" ? "glassy" : "s-" + st}`;
       el.innerHTML = c.display === "analog" ? analogSVG() : `<div class="dg"><div class="big"><span class="mn"></span><small></small></div><div class="sub"></div><div class="bar"><i></i></div></div>`;
     }
+    el.appendChild(Object.assign(document.createElement("i"), { className: "rz" }));
     $("#items").appendChild(el);
   }
-  el._L = L; Object.assign(el.style, { zIndex: it.z, fontFamily: fontCss(it.font) });
+  if (!(drag && drag.el === el)) el._L = L;
+  Object.assign(el.style, { zIndex: it.z, fontFamily: fontCss(it.font) });
   el.style.setProperty("--fs", it.fontSize + "px");
   if (it.kind === "note") {
-    if (el._t !== it.title) el.firstChild.textContent = el._t = it.title;
-    if (el._c !== it.content) el.lastChild.innerHTML = renderMarkdown((el._c = it.content));
+    if (el._t !== it.title) el.querySelector(".t").textContent = el._t = it.title;
+    if (el._c !== it.content) el.querySelector(".b").innerHTML = renderMarkdown((el._c = it.content));
   } else tickClock(el, it);
 }
 function drop(id) { const el = els.get(id); if (!el) return; els.delete(id); el.classList.add("bye"); setTimeout(() => el.remove(), 500); }
@@ -117,6 +120,23 @@ function moveItems(dt) {
     const it = items.get(el.dataset.id); if (it && it.clock && it.clock.display === "analog") hands(el, it);
   }
 }
+// drag to move, corner handle to resize (unless the control locked this screen)
+let drag = null;
+const sendLay = throttle((id, p) => link.send({ type: "layout.set", id, screen: SID, patch: p }), 40);
+$("#items").addEventListener("pointerdown", (e) => {
+  gesture(); wakeUi();
+  const el = e.target.closest(".it"); if (!el || me.locked) return;
+  e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add("drag");
+  drag = { el, id: el.dataset.id, x: e.clientX, y: e.clientY, o: { ...el._L }, rz: e.target.classList.contains("rz") };
+  link.send({ type: "item.front", id: drag.id, screen: SID });
+});
+$("#items").addEventListener("pointermove", (e) => {
+  if (!drag) return; const { el, o } = drag, dx = (e.clientX - drag.x) / innerWidth, dy = (e.clientY - drag.y) / innerHeight;
+  const p = drag.rz ? { w: clamp(o.w + dx, .03, 1 - o.x), h: clamp(o.h + dy, .03, 1 - o.y) } : { x: clamp(o.x + dx, 0, 1 - o.w), y: clamp(o.y + dy, 0, 1 - o.h) };
+  el._L = { ...el._L, ...p }; sendLay(drag.id, p);
+});
+const endDrag = () => { if (!drag) return; const { el, id } = drag, L = el._L; el.classList.remove("drag"); drag = null; link.send({ type: "layout.set", id, screen: SID, patch: { x: L.x, y: L.y, w: L.w, h: L.h } }); };
+$("#items").addEventListener("pointerup", endDrag); $("#items").addEventListener("pointercancel", endDrag);
 let ringT = 0;
 setInterval(() => {
   let ring = false;

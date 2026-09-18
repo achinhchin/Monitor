@@ -78,6 +78,7 @@ type Screen struct {
 	Name     string   `json:"name"`
 	Scene    string   `json:"scene"`
 	FpsCap   int      `json:"fpsCap"` // 0 = display refresh rate
+	Locked   bool     `json:"locked"` // monitor may not move/resize items
 	W        float64  `json:"w"`
 	H        float64  `json:"h"`
 	DPR      float64  `json:"dpr"`
@@ -589,11 +590,22 @@ func (h *Hub) handle(c *Client, m inbound) {
 
 	case m.Type == "stats" && c.role == "monitor":
 		if s := h.screens[c.screen]; s != nil {
-			name, scene, fc := s.Name, s.Scene, s.FpsCap
+			name, scene, fc, lk := s.Name, s.Scene, s.FpsCap, s.Locked
 			_ = json.Unmarshal(m.Patch, s) // w,h,dpr,fps,audio,battery
-			s.ID, s.Name, s.Scene, s.FpsCap, s.Online, s.LastSeen = c.screen, name, scene, fc, true, time.Now().UnixMilli()
+			s.ID, s.Name, s.Scene, s.FpsCap, s.Locked, s.Online, s.LastSeen = c.screen, name, scene, fc, lk, true, time.Now().UnixMilli()
 			h.bcastScreens()
 		}
+
+	// a monitor may move/resize items on its own screen unless the screen is locked
+	case !ctl && it != nil && (m.Type == "layout.set" || m.Type == "item.front") && h.screens[c.screen] != nil && !h.screens[c.screen].Locked:
+		if m.Type == "item.front" {
+			it.Z = h.maxZ() + 1
+		} else if l := it.L[c.screen]; l != nil {
+			_ = json.Unmarshal(m.Patch, l)
+			clampLayout(l)
+			h.dirty = true
+		}
+		h.bcast(itemMsg(it, c.id))
 
 	case !ctl:
 		return
@@ -621,6 +633,7 @@ func (h *Hub) handle(c *Client, m inbound) {
 				Name   *string `json:"name"`
 				Scene  *string `json:"scene"`
 				FpsCap *int    `json:"fpsCap"`
+				Locked *bool   `json:"locked"`
 			}
 			_ = json.Unmarshal(m.Patch, &p)
 			if p.Name != nil && *p.Name != "" {
@@ -628,6 +641,9 @@ func (h *Hub) handle(c *Client, m inbound) {
 			}
 			if p.Scene != nil && scenes[*p.Scene] {
 				s.Scene = *p.Scene
+			}
+			if p.Locked != nil {
+				s.Locked = *p.Locked
 			}
 			if p.FpsCap != nil {
 				s.FpsCap = max(0, min(240, *p.FpsCap))

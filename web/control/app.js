@@ -41,13 +41,14 @@ function renderScreens() {
   }
   const s = curScr(); $("#scrEdit").hidden = !s; if (!s) return;
   if (document.activeElement !== $("#scrName")) $("#scrName").value = s.name;
-  $("#scrScene").value = s.scene; $("#scrFps").value = String(s.fpsCap || 0); $("#scrDel").disabled = s.online;
+  $("#scrScene").value = s.scene; $("#scrFps").value = String(s.fpsCap || 0); $("#scrLock").checked = !!s.locked; $("#scrDel").disabled = s.online;
   $("#layScr").textContent = "· " + s.name;
 }
 const scrUpd = (p) => scr && send({ type: "screen.update", screen: scr, patch: p });
 $("#scrName").onchange = (e) => scrUpd({ name: e.target.value.trim() });
 $("#scrScene").onchange = (e) => scrUpd({ scene: e.target.value });
 $("#scrFps").onchange = (e) => scrUpd({ fpsCap: +e.target.value });
+$("#scrLock").onchange = (e) => scrUpd({ locked: e.target.checked });
 $("#scrDel").onclick = () => { const s = curScr(); if (s && !s.online && confirm(`Forget screen "${s.name}"?`)) send({ type: "screen.delete", screen: s.id }); };
 $("#scrLink").onclick = () => { const u = `${location.origin}/monitor/?screen=${encodeURIComponent(scr)}`; (navigator.clipboard ? navigator.clipboard.writeText(u) : Promise.reject()).then(() => ($("#scrLink").textContent = "✓"), () => prompt("Monitor link", u)); setTimeout(() => ($("#scrLink").textContent = "🔗"), 1500); };
 $("#newScreen").onclick = () => window.open(`/monitor/?screen=screen-${Math.random().toString(36).slice(2, 6)}`, "_blank");

@@ -45,7 +45,7 @@ The database is SQLite in WAL mode with a single connection. It has three tables
 The `data` and `v` columns hold the JSON of the Go structs, so fields can be queried with `json_extract`. The hub marks state dirty on every change. `save()` takes a snapshot under the lock and then writes it outside the lock in one transaction: about every 2s while there are changes, every 30s for the running clock, and on shutdown. When the database is empty on startup, a legacy `-data` state.json is imported once and renamed to `*.imported`.
 
 ## Data model (hub.go)
-- `Screen{id,name,scene,fpsCap,w,h,dpr,online,fps,audio,battery,lastSeen}` is created the first time a monitor connects with that id. Monitors report their size, fps, audio state and battery through `stats`. A second connection with the same screen id **kicks the older one**; different ids coexist.
+- `Screen{id,name,scene,fpsCap,locked,w,h,dpr,online,fps,audio,battery,lastSeen}` is created the first time a monitor connects with that id. Monitors report their size, fps, audio state and battery through `stats`. A second connection with the same screen id **kicks the older one**; different ids coexist.
 - `Item{id,kind:"note"|"clock",title,content,font,fontSize,z,clock?,layouts{screenId: Layout}}`
   - `Layout{x,y,w,h,on}` stores fractions of that screen's viewport. Every item has one layout per screen: notes default to the bottom right, clocks to the top right.
   - `Clock{mode: clock|timer|countdown|alarm, display: digital|analog, style, duration, running, startAt, acc, alarm "HH:MM", ringing, ringAt, fired}`. Elapsed time is `acc + (running ? now-startAt : 0)`, using server epoch ms; monitors correct for clock skew with `serverTime`. For an alarm, `running` means armed.
@@ -64,11 +64,11 @@ Client → server (`type`, fields):
 | `stats` | `patch:{w,h,dpr,fps,audio,battery}` | monitor |
 | `item.create` | `kind` | control |
 | `item.update` | `id, patch` (JSON merge into the Item; the `clock` sub-object merges too) | control |
-| `item.front` / `item.delete` | `id` | control |
-| `layout.set` | `id, screen` (`"*"` = all screens), `patch:{x,y,w,h,on}` | control |
+| `item.front` / `item.delete` | `id` | control (a monitor may also send `item.front` unless locked) |
+| `layout.set` | `id, screen` (`"*"` = all screens), `patch:{x,y,w,h,on}` | control; monitor for its own screen unless `locked` |
 | `clock.act` | `id, act: start\|pause\|reset\|dismiss` | control |
 | `env.set` | `patch`: any Env field, plus `season` (jump), `hour` (jump), `reroll` | control |
-| `screen.update` | `screen, patch:{name,scene,fpsCap}` | control |
+| `screen.update` | `screen, patch:{name,scene,fpsCap,locked}` | control |
 | `screen.delete` | `screen` (offline only; also drops its layouts) | control |
 
 Server → client: `welcome{id,items,screens,env}`, `item.upsert{item,by}`, `item.remove{id}`, `env{env}`, `screens{screens}`, `kicked`, `pong`.
@@ -131,6 +131,7 @@ Interactive objects:
 ## Monitor app.js
 - **Screen id**: `?screen=` or localStorage.
 - **Items**: `upsert` renders the item only if `layouts[SID].on`. A note is glass-styled markdown. A clock is digital (auto-fit with container units) or analog (SVG, monotonic hand angles, a progress arc for countdowns, an alarm hand) in one of the styles `glass|minimal|paper|neon|retro|mono|pastel`, with a font from `FONTS`. Text scales with `--sc = min(W,H)/800`. Ringing clocks shake and chime.
+- **On-screen editing**: drag a note or clock to move it and drag its corner handle (`.rz`) to resize it. The layout updates locally right away, and throttled `layout.set` messages sync it to the server and the control; upserts arriving during a drag are ignored for that item. Editing is disabled when the control has locked the screen (`body.locked`).
 - **Other**: the battery (`navigator.getBattery`) shows at the top right and goes to the control. The page goes fullscreen automatically on load or the first gesture, unless the user exited it. There is also a wake lock, cursor auto-hide, and night-adaptive CSS variables.
 
 ## Control app.js
