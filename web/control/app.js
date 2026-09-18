@@ -210,6 +210,7 @@ function setEnv(e) {
   $$("[data-sl]").forEach((i) => act !== i && (i.value = E.seasonMin[+i.dataset.sl]));
   $$("#weather .seg").forEach((b) => b.classList.toggle("on", b.dataset.w === E.weatherMode));
   for (const k in knobs) knobs[k](E.knobs[k] ?? .5);
+  const gv = E.knobs.grain ?? .5; if (act !== $("#grain")) $("#grain").value = gv; $("#grainV").textContent = Math.round(gv * 100); $("#grainR").style.opacity = Math.abs(gv - e.knobDefs.grain) < .005 ? .3 : 1;
   $("#mute").textContent = E.muted ? "🔇 muted" : "🔊 sound"; $("#hud").checked = E.showHud;
   renderStatus();
 }
@@ -223,6 +224,8 @@ $("#lockSeason").onchange = (e) => setE({ seasonLocked: e.target.checked });
 $$("[data-sl]").forEach((i) => (i.onchange = () => setE({ seasonMin: $$("[data-sl]").map((x) => +x.value || 60) })));
 $$("#weather .seg").forEach((b) => (b.onclick = () => setE({ weatherMode: b.dataset.w })));
 $("#reroll").onclick = () => setE({ weatherMode: "auto", reroll: true });
+$("#grain").oninput = throttle(() => { $("#grainV").textContent = Math.round($("#grain").value * 100); setE({ knobs: { grain: +$("#grain").value } }); }, 60);
+$("#grainR").onclick = () => env && setE({ knobs: { grain: env.knobDefs.grain } });
 $("#mute").onclick = () => env && setE({ muted: !env.env.muted });
 $("#hud").onchange = (e) => setE({ showHud: e.target.checked });
 

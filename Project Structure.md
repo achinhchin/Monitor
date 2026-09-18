@@ -50,7 +50,7 @@ The `data` and `v` columns hold the JSON of the Go structs, so fields can be que
   - `Layout{x,y,w,h,on}` stores fractions of that screen's viewport. Every item has one layout per screen: notes default to the bottom right, clocks to the top right.
   - `Clock{mode: clock|timer|countdown|alarm, display: digital|analog, style, duration, running, startAt, acc, alarm "HH:MM", ringing, ringAt, fired}`. Elapsed time is `acc + (running ? now-startAt : 0)`, using server epoch ms; monitors correct for clock skew with `serverTime`. For an alarm, `running` means armed.
   - `checkClocks` runs every second: a finished countdown or a matching alarm time (in **server local time**) sets `ringing`, which clears itself after 3 minutes or when dismissed.
-- `Env{dayMs, yearMs, dayMin, nightMin, seasonMin[4], paused, speed, seasonLocked, weatherMode, knobs{animals,rain,wind,volume}, muted, showHud, w}`
+- `Env{dayMs, yearMs, dayMin, nightMin, seasonMin[4], paused, speed, seasonLocked, weatherMode, knobs{animals,rain,wind,volume,grain}, muted, showHud, w}`
   - The day cycle is `dayMin + nightMin` minutes. The phase is stretched so 0 is sunrise and .5 is sunset, which makes day and night last different lengths. Seasons use `seasonMin[i]` each. Changing any of these lengths keeps the current phase and season position.
   - Weather `w{state, intensity, cloud, left}` is a Markov chain running on virtual time: clear → cloudy → rain ⇄ storm. The `rain` knob biases it toward wet weather. Setting `weatherMode` to anything other than auto fixes the weather.
   - `knobDefs` holds the knob defaults and is sent to clients for the ↺ reset buttons.

@@ -31,6 +31,7 @@ function screens(list) { me = list.find((s) => s.id === SID) || me; world.setSce
 function setEnv(e) {
   env = e; skew = e.serverTime - Date.now(); world.setEnv(e);
   amb.vol = e.env.knobs.volume; amb.muted = e.env.muted;
+  const gv = e.env.knobs.grain ?? .5; grain.on = gv > .005; document.documentElement.style.setProperty("--grainA", (gv * .6).toFixed(3));
   $("#hud").classList.toggle("hide", !e.env.showHud);
   $("#hSeason").textContent = SEASON[e.season]; $("#hWx").textContent = (WX[e.weather.state] || "").replace("rain", e.season === 3 ? "snow" : "rain");
 }

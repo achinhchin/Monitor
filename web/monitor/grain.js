@@ -31,7 +31,7 @@ class Grain {
     this.last = 0; this.amt = .16; this.ok = true;
   }
   frame(now) {
-    const gl = this.gl; if (!gl || now - this.last < 41) return; this.last = now;
+    const gl = this.gl; if (!gl || this.on === false || now - this.last < 41) return; this.last = now;
     const w = Math.ceil(this.c.clientWidth / 1.4), h = Math.ceil(this.c.clientHeight / 1.4); // grain ≈1.4 css px, bilinear upscale softens it
     if (this.c.width !== w || this.c.height !== h) { this.c.width = w; this.c.height = h; gl.viewport(0, 0, w, h); }
     gl.uniform2f(this.u.r, w, h); gl.uniform1f(this.u.s, Math.random() * 97); gl.uniform1f(this.u.amt, this.amt); gl.uniform1f(this.u.fl, (Math.random() - .5) * .012);

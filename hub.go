@@ -29,7 +29,7 @@ const (
 var (
 	seasonNames = []string{"spring", "summer", "autumn", "winter"}
 	scenes      = map[string]bool{"meadow": true, "forest": true, "mountain": true, "beach": true, "city": true}
-	knobDefs    = map[string]float64{"animals": .5, "rain": .5, "wind": .5, "volume": .6}
+	knobDefs    = map[string]float64{"animals": .5, "rain": .5, "wind": .5, "volume": .6, "grain": .5}
 	screenIDRe  = regexp.MustCompile(`^[\w-]{1,40}$`)
 )
 
