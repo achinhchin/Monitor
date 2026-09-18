@@ -2,23 +2,29 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
 <title>Monitor</title>
 <link rel="stylesheet" href="/shared/fonts.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <canvas id="sky"></canvas>
-<div id="notes"></div>
+<div id="fx"></div><div id="flash"></div>
+<div id="items"></div>
 <div id="hud"><span id="hClock">--:--</span><span id="hSeason"></span><span id="hWx"></span></div>
-<button id="fs" title="Fullscreen (or double-click)">⛶ fullscreen</button>
-<div id="off" class="off">reconnecting…</div>
-<button id="sound">♪ tap to enable sound</button>
-<div id="kicked" hidden><p>Another monitor took over.</p><button onclick="location.reload()">take over again</button></div>
+<div id="bat" hidden><i><b></b></i><span></span></div>
+<div id="off">reconnecting…</div>
+<button id="sound" class="pill">♪ tap to enable sound</button>
+<button id="fs" class="pill">⛶ fullscreen</button>
+<div id="kicked" hidden><p>This screen was opened somewhere else.</p><button class="pill" onclick="location.reload()">take over again</button></div>
 <script src="/shared/marked.min.js"></script>
 <script src="/shared/purify.min.js"></script>
 <script src="/shared/link.js"></script>
-<script src="scene.js"></script>
+<script src="/shared/fonts.js"></script>
+<script src="world.js"></script>
+<script src="scenes.js"></script>
+<script src="life.js"></script>
 <script src="audio.js"></script>
 <script src="app.js"></script>
 </body>
