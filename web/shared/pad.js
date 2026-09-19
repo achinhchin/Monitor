@@ -1,14 +1,13 @@
 // Scratch pad: pressure-sensitive ink with palm rejection, live streaming and undo.
 // Points are x,y,pressure triples; x and y are normalised by the canvas width so ink keeps its shape.
 (() => {
-const INK = ["#2b2b3a", "#3d6fd6", "#e0564f", "#3aa76d", "#f2a93b", "#f4f1ea"], SIZES = [.004, .008, .016];
 const r4 = (v) => Math.round(v * 1e4) / 1e4;
 
 class PadView {
   constructor(canvas, send) {
     this.c = canvas; this.g = canvas.getContext("2d"); this.send = send;
     this.strokes = []; this.live = new Map(); this.cur = null; this.penAt = -1e9; this.lastLive = 0;
-    this.tool = { c: INK[0], w: SIZES[1], e: false };
+    this.tool = { c: "#2b2b3a", w: .0064, e: false };
     let t; this.ro = new ResizeObserver(() => { clearTimeout(t); t = setTimeout(() => this.fit(), 120); }); this.ro.observe(canvas);
     this.bind(); this.fit();
   }
@@ -24,16 +23,16 @@ class PadView {
   draw(s, from = 0) {
     const g = this.g, P = s.p, W = this.c.width, base = s.w * W;
     g.globalCompositeOperation = s.e ? "destination-out" : "source-over"; g.strokeStyle = g.fillStyle = s.c; g.lineCap = g.lineJoin = "round";
-    if (P.length === 3 && !from) { g.beginPath(); g.arc(P[0] * W, P[1] * W, base * (s.e ? 1.25 : .2 + P[2] * .7), 0, 7); g.fill(); }
+    if (P.length === 3 && !from) { g.beginPath(); g.arc(P[0] * W, P[1] * W, base * (s.e ? .5 : .2 + P[2] * .7), 0, 7); g.fill(); }
     for (let i = Math.max(3, from - 3); i < P.length; i += 3) {
       const mx = (a) => ((P[a - 3] + P[a]) / 2) * W, my = (a) => ((P[a - 2] + P[a + 1]) / 2) * W;
-      g.lineWidth = base * (s.e ? 2.5 : .35 + P[i + 2] * 1.3); g.beginPath();
+      g.lineWidth = base * (s.e ? 1 : .35 + P[i + 2] * 1.3); g.beginPath();
       if (i < 6) g.moveTo(P[0] * W, P[1] * W); else g.moveTo(mx(i - 3), my(i - 3));
       g.quadraticCurveTo(P[i - 3] * W, P[i - 2] * W, mx(i), my(i)); g.stroke();
     }
     g.globalCompositeOperation = "source-over";
   }
-  tail(s) { const P = s.p, n = P.length, W = this.c.width; if (n < 6) return; const g = this.g; g.globalCompositeOperation = s.e ? "destination-out" : "source-over"; g.strokeStyle = s.c; g.lineWidth = s.w * W * (s.e ? 2.5 : .35 + P[n - 1] * 1.3); g.beginPath(); g.moveTo(((P[n - 6] + P[n - 3]) / 2) * W, ((P[n - 5] + P[n - 2]) / 2) * W); g.lineTo(P[n - 3] * W, P[n - 2] * W); g.stroke(); g.globalCompositeOperation = "source-over"; }
+  tail(s) { const P = s.p, n = P.length, W = this.c.width; if (n < 6) return; const g = this.g; g.globalCompositeOperation = s.e ? "destination-out" : "source-over"; g.strokeStyle = s.c; g.lineWidth = s.w * W * (s.e ? 1 : .35 + P[n - 1] * 1.3); g.beginPath(); g.moveTo(((P[n - 6] + P[n - 3]) / 2) * W, ((P[n - 5] + P[n - 2]) / 2) * W); g.lineTo(P[n - 3] * W, P[n - 2] * W); g.stroke(); g.globalCompositeOperation = "source-over"; }
   bind() {
     const c = this.c, pt = (e) => { const r = c.getBoundingClientRect(); return [r4((e.clientX - r.left) / r.width), r4((e.clientY - r.top) / r.width), e.pointerType === "mouse" || !e.pressure ? .5 : Math.round(e.pressure * 100) / 100]; };
     c.addEventListener("pointerdown", (e) => {
@@ -55,23 +54,39 @@ class PadView {
   }
 }
 
-// toolbar: ink colours, pen size, eraser, undo, clear (tap twice)
-function padTools(box, view, act, dark) {
-  if (dark) view.tool.c = INK[5];
-  box.innerHTML = INK.map((c) => `<button class="pt ink" data-c="${c}" style="--ink:${c}"></button>`).join("") + `<button class="pt sz" title="size">●</button><button class="pt er" title="eraser">⌫</button><button class="pt un" title="undo">↶</button><button class="pt cl" title="clear">✕</button>`;
-  const sync = () => { box.querySelectorAll(".ink").forEach((b) => b.classList.toggle("on", !view.tool.e && b.dataset.c === view.tool.c)); box.querySelector(".er").classList.toggle("on", view.tool.e); box.querySelector(".sz").style.fontSize = 6 + SIZES.indexOf(view.tool.w) * 4 + "px"; };
+// tool panel: 5 editable inks (tap the selected one to recolour), pen + eraser size sliders, undo/redo/clear.
+// Choices are per device (localStorage) so every writer keeps their own pens.
+const PREF = "padPrefs", DEF = { ink: ["#2b2b3a", "#3d6fd6", "#e0564f", "#3aa76d", "#f4f1ea"], ci: 0, pen: 8, er: 40, e: false };
+const loadP = () => { try { return { ...DEF, ...JSON.parse(localStorage.getItem(PREF)) }; } catch (_) { return { ...DEF }; } };
+const saveP = (p) => { try { localStorage.setItem(PREF, JSON.stringify(p)); } catch (_) {} };
+function padTools(box, view, act) {
+  const P = loadP();
+  box.innerHTML = `<div class="pt-row"><span class="grip" title="move">⠿</span>${P.ink.map((c, i) => `<button class="pt ink" data-i="${i}" style="--ink:${c}"><input type="color" value="${c}" tabindex="-1"></button>`).join("")}<span class="sep"></span><button class="pt er" title="eraser">⌫</button><button class="pt un" title="undo">↶</button><button class="pt re" title="redo">↷</button><button class="pt cl" title="clear (tap twice)">✕</button></div>
+<div class="pt-row sl"><span class="pv"><i></i></span><input class="psz" type="range" min="1" max="40" step="1" title="pen size"><b class="nv pn"></b></div>
+<div class="pt-row sl"><span class="pv er-pv"><i></i></span><input class="esz" type="range" min="4" max="120" step="1" title="eraser size"><b class="nv en"></b></div>`;
+  const $ = (q) => box.querySelector(q), inks = [...box.querySelectorAll(".ink")];
+  const apply = () => {
+    view.tool = P.e ? { c: "#000", w: P.er * .001, e: true } : { c: P.ink[P.ci], w: P.pen * .0008, e: false };
+    inks.forEach((b, i) => { b.style.setProperty("--ink", P.ink[i]); b.classList.toggle("on", !P.e && i === P.ci); });
+    $(".er").classList.toggle("on", P.e); $(".psz").value = P.pen; $(".esz").value = P.er;
+    const pv = $(".pv i"), ev = $(".er-pv i"); pv.style.cssText = `width:${4 + P.pen * .9}px;height:${4 + P.pen * .9}px;background:${P.ink[P.ci]}`; ev.style.cssText = `width:${6 + P.er * .35}px;height:${6 + P.er * .35}px`;
+    $(".pn").textContent = P.pen; $(".en").textContent = P.er; box.classList.toggle("erasing", P.e); saveP(P);
+  };
   let armed = 0;
-  box.addEventListener("pointerdown", (e) => e.stopPropagation());
+  box.addEventListener("pointerdown", (e) => { if (!e.target.closest(".grip")) e.stopPropagation(); });
   box.addEventListener("click", (e) => {
     const b = e.target.closest(".pt"); if (!b) return; e.stopPropagation();
-    if (b.dataset.c) { view.tool.c = b.dataset.c; view.tool.e = false; }
-    else if (b.classList.contains("sz")) view.tool.w = SIZES[(SIZES.indexOf(view.tool.w) + 1) % SIZES.length];
-    else if (b.classList.contains("er")) view.tool.e = !view.tool.e;
+    if (b.dataset.i) { const i = +b.dataset.i; if (!P.e && i === P.ci && e.target === b) b.firstChild.click(); P.ci = i; P.e = false; }
+    else if (b.classList.contains("er")) P.e = !P.e;
     else if (b.classList.contains("un")) act("undo");
+    else if (b.classList.contains("re")) act("redo");
     else if (b.classList.contains("cl")) { if (Date.now() - armed < 2500) { act("clear"); armed = 0; b.classList.remove("warn"); } else { armed = Date.now(); b.classList.add("warn"); setTimeout(() => b.classList.remove("warn"), 2500); } }
-    sync();
+    apply();
   });
-  sync();
+  inks.forEach((b, i) => b.firstChild.addEventListener("input", (e) => { P.ink[i] = e.target.value; P.ci = i; P.e = false; apply(); }));
+  $(".psz").addEventListener("input", (e) => { P.pen = +e.target.value; P.e = false; apply(); });
+  $(".esz").addEventListener("input", (e) => { P.er = +e.target.value; P.e = true; apply(); });
+  apply();
 }
-window.PadView = PadView; window.padTools = padTools; window.PAD_BGS = ["paper", "grid", "dark", "glass"];
+window.PadView = PadView; window.padTools = padTools; window.PAD_BGS = ["paper", "grid", "dark", "glass", "clear"];
 })();

@@ -47,7 +47,7 @@ The `data` and `v` columns hold the JSON of the Go structs, so fields can be que
 
 ## Data model (hub.go)
 - `Screen{id,name,scene,fpsCap,locked,w,h,dpr,online,fps,audio,battery,lastSeen}` is created the first time a monitor connects with that id. Monitors report their size, fps, audio state and battery through `stats`. A second connection with the same screen id **kicks the older one**; different ids coexist.
-- `Item{id,kind:"note"|"clock"|"pad",title,content,font,fontSize,z,clock?,pad?{bg},layouts{screenId: Layout}}`
+- `Item{id,kind:"note"|"clock"|"pad",title,content,font,fontSize,z,clock?,pad?{bg: paper|grid|dark|glass|clear},layouts{screenId: Layout}}`
   - `Layout{x,y,w,h,on}` stores fractions of that screen's viewport. Every item has one layout per screen: notes default to the bottom right, clocks to the top right.
   - `Clock{mode: clock|timer|countdown|alarm, display: digital|analog, style, duration, running, startAt, acc, alarm "HH:MM", ringing, ringAt, fired}`. Elapsed time is `acc + (running ? now-startAt : 0)`, using server epoch ms; monitors correct for clock skew with `serverTime`. For an alarm, `running` means armed.
   - `checkClocks` runs every second: a finished countdown or a matching alarm time (in **server local time**) sets `ringing`, which clears itself after 3 minutes or when dismissed.
@@ -60,8 +60,9 @@ The `data` and `v` columns hold the JSON of the Go structs, so fields can be que
 ## Scratch pads
 - The ink is stored outside the Item, in `Hub.pads[id] []Stroke` (SQLite table `pads`), so layout updates stay small. The welcome message carries `pads`.
 - `Stroke{k,c,w,e,p}` holds points as flat `x,y,pressure` triples. x and y are divided by the pad canvas width, so writing keeps its shape when the pad is resized or shown on a screen with a different aspect ratio.
-- Messages: `pad.live{id,k,s}` is relayed to other clients while drawing (not stored); `pad.stroke{id,stroke}` appends and is broadcast; `pad.undo` and `pad.clear` answer with `pad.set{id,strokes}`. Each pad is capped at 3000 strokes and 30k points per stroke.
-- On the monitor, a pad moves by its header and resizes by its corner, and the ink area draws. Drawing works even when the screen is locked. Touch input is ignored for 3s after a pen is used, for palm rejection.
+- Messages: `pad.live{id,k,s}` is relayed to other clients while drawing (not stored); `pad.stroke{id,stroke}` appends and is broadcast; `pad.undo`, `pad.redo` and `pad.clear` answer with `pad.set{id,strokes}`. Each pad is capped at 3000 strokes and 30k points per stroke.
+- Backgrounds: `paper|grid|dark|glass|clear`, where `clear` is fully transparent ink over the scene. Undo and redo run on the server; `Hub.redo` holds undone strokes in memory and is cleared by new ink.
+- On the monitor, the ink area always draws. The glass tool panel (`.ptools`) appears on touch and fades out 3.5s after the last touch, or 1.2s after the mouse leaves. It holds a ⠿ grip for moving, the corner resize handle, 5 inks (tap the selected ink to recolour it), a pen size slider, an eraser size slider, undo, redo and clear (tap twice). Ink colours and sizes are saved per device in the `padPrefs` localStorage key. Drawing works even when the screen is locked. Touch input is ignored for 3s after a pen is used, for palm rejection.
 
 ## WebSocket protocol (`/ws?role=control` | `/ws?role=monitor&screen=<id>`)
 Client → server (`type`, fields):

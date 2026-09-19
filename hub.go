@@ -128,7 +128,7 @@ type persisted struct {
 
 // Pad is a scratch pad; its ink lives in Hub.pads so layout updates stay small.
 type Pad struct {
-	Bg string `json:"bg"` // paper | grid | dark | glass
+	Bg string `json:"bg"` // paper | grid | dark | glass | clear
 }
 
 // Stroke points are x,y,pressure triples; x and y are normalised by the pad's width (keeps aspect).
@@ -148,6 +148,7 @@ type Hub struct {
 	items   map[string]*Item
 	screens map[string]*Screen
 	pads    map[string][]Stroke
+	redo    map[string][]Stroke // undone strokes, cleared by new ink (memory only)
 	env     Env
 	store   *Store
 	dirty   bool
@@ -157,7 +158,7 @@ type Hub struct {
 
 func NewHub(store *Store, legacyJSON string) *Hub {
 	h := &Hub{
-		clients: map[string]*Client{}, items: map[string]*Item{}, screens: map[string]*Screen{}, pads: map[string][]Stroke{},
+		clients: map[string]*Client{}, items: map[string]*Item{}, screens: map[string]*Screen{}, pads: map[string][]Stroke{}, redo: map[string][]Stroke{},
 		store: store, quit: make(chan struct{}),
 		env: Env{DayMin: 10, NightMin: 10, SeasonMin: [4]float64{60, 60, 60, 60}, Speed: 1, WeatherMode: "auto",
 			ShowHud: true, Knobs: map[string]float64{}, W: Weather{State: "clear", Cloud: .3, Left: 5 * minute}},
@@ -650,7 +651,8 @@ func (h *Hub) handle(c *Client, m inbound) {
 		if len(st.P) == 0 || len(st.P)%3 != 0 || len(st.P) > maxPoints {
 			return
 		}
-		st.W = clamp(st.W, .001, .08)
+		st.W = clamp(st.W, .0005, .15)
+		delete(h.redo, it.ID)
 		list := append(h.pads[it.ID], st)
 		if len(list) > maxStrokes {
 			list = list[len(list)-maxStrokes:]
@@ -659,11 +661,16 @@ func (h *Hub) handle(c *Client, m inbound) {
 		h.dirty = true
 		h.bcast(mustJSON(map[string]any{"type": "pad.stroke", "id": it.ID, "stroke": st, "by": c.id}))
 
-	case it != nil && it.Kind == "pad" && (m.Type == "pad.undo" || m.Type == "pad.clear"):
-		if l := h.pads[it.ID]; m.Type == "pad.undo" && len(l) > 0 {
-			h.pads[it.ID] = l[:len(l)-1]
-		} else if m.Type == "pad.clear" {
+	case it != nil && it.Kind == "pad" && (m.Type == "pad.undo" || m.Type == "pad.redo" || m.Type == "pad.clear"):
+		l, r := h.pads[it.ID], h.redo[it.ID]
+		switch {
+		case m.Type == "pad.undo" && len(l) > 0:
+			h.pads[it.ID], h.redo[it.ID] = l[:len(l)-1], append(r, l[len(l)-1])
+		case m.Type == "pad.redo" && len(r) > 0:
+			h.pads[it.ID], h.redo[it.ID] = append(l, r[len(r)-1]), r[:len(r)-1]
+		case m.Type == "pad.clear":
 			delete(h.pads, it.ID)
+			delete(h.redo, it.ID)
 		}
 		h.dirty = true
 		h.bcast(mustJSON(map[string]any{"type": "pad.set", "id": it.ID, "strokes": h.pads[it.ID]}))
@@ -772,6 +779,7 @@ func (h *Hub) handle(c *Client, m inbound) {
 		delete(h.items, it.ID)
 		delete(h.pads, it.ID)
 		h.dirty = true
+		delete(h.redo, it.ID)
 		h.bcast(mustJSON(map[string]any{"type": "item.remove", "id": it.ID}))
 	}
 

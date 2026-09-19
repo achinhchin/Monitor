@@ -82,7 +82,7 @@ function fillEditor() {
     const bg = (it.pad && it.pad.bg) || "paper", s = size(); $("#padPrev").className = "padbox bg-" + bg;
     $$("#padBg .seg").forEach((b) => b.classList.toggle("on", b.dataset.v === bg));
     if (L) $("#padPrev").style.aspectRatio = `${(L.w * s.w).toFixed(0)} / ${(L.h * s.h).toFixed(0)}`;
-    if (pv._for !== it.id || pv._bg !== bg) { pv._for = it.id; pv._bg = bg; padTools($("#padTools"), pv, (a) => send({ type: "pad." + a, id: sel }), bg === "dark"); pv.set(pads[it.id]); }
+    if (pv._for !== it.id) { pv._for = it.id; pv.set(pads[it.id]); }
     return;
   }
   if (!clock) { set($("#content"), it.content); $("#preview").innerHTML = renderMarkdown(it.content); return; }
@@ -121,6 +121,7 @@ $("#newNote").onclick = () => send({ type: "item.create", kind: "note" });
 $("#newClock").onclick = () => send({ type: "item.create", kind: "clock" });
 $("#newPad").onclick = () => send({ type: "item.create", kind: "pad" });
 const pv = new PadView($("#padPrev canvas"), (t, s) => sel && send(t === "live" ? { type: "pad.live", id: sel, k: s.k, s } : { type: "pad.stroke", id: sel, stroke: s }));
+padTools($("#padTools"), pv, (a) => sel && send({ type: "pad." + a, id: sel }));
 $("#padBg").innerHTML = PAD_BGS.map((b) => `<button class="seg" data-v="${b}">${b}</button>`).join("");
 $("#padBg").onclick = (e) => { const b = e.target.closest(".seg"); if (b && sel) { patchItem(sel, { pad: { bg: b.dataset.v } }); fillEditor(); } };
 $$(".tabs .seg").forEach((b) => (b.onclick = () => { $$(".tabs .seg").forEach((x) => x.classList.toggle("on", x === b)); $("#panes").className = "panes " + b.dataset.view; }));

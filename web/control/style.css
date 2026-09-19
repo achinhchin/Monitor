@@ -53,7 +53,7 @@ main{display:grid;grid-template-columns:280px minmax(0,1fr) 350px;gap:12px;paddi
 .md-view{overflow:auto;padding:4px 14px;border-radius:10px;border:1px solid var(--line);font-size:13px}
 .md-view img{max-width:100%}.md-view pre{background:var(--line);padding:8px;border-radius:8px;overflow:auto}.md-view table{border-collapse:collapse}.md-view td,.md-view th{border:1px solid var(--line);padding:3px 8px}
 .chips{display:flex;flex-wrap:wrap;gap:4px}.chips .seg{flex:0;border-radius:99px;margin:0;padding:3px 10px;font-size:12px}
-.padwrap{flex:1;min-height:0;display:grid;place-items:center}#padPrev{width:100%;max-height:100%;aspect-ratio:4/3}
+.padwrap{flex:1;min-height:0;display:grid;place-items:center;margin-top:8px;border-radius:16px;background:repeating-conic-gradient(rgba(127,127,127,.12) 0 25%,transparent 0 50%) 0 0/18px 18px}#padEd .ptools{font-size:13px}#padPrev{width:100%;max-height:100%;aspect-ratio:4/3}
 .live{margin-top:10px;padding:14px;border-radius:12px;background:var(--line);font-size:26px;text-align:center;font-variant-numeric:tabular-nums}
 .live small{display:block;font-size:12px;color:var(--dim)}
 .pads{display:flex;justify-content:center;gap:8px;flex-wrap:wrap}

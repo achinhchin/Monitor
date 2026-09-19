@@ -53,9 +53,13 @@ function upsert(it) {
     if (it.kind === "note") { el.className = "it note glassy"; el.innerHTML = `<div class="t"></div><div class="b"></div>`; }
     else if (it.kind === "pad") {
       const bg = (it.pad && it.pad.bg) || "paper"; el.className = `it pad padbox bg-${bg}`;
-      el.innerHTML = `<div class="hdr"><span class="t"></span><span class="ptools"></span></div><canvas class="ink-c"></canvas>`;
+      el.innerHTML = `<canvas class="ink-c"></canvas><div class="ptools"></div>`;
+      // tools appear on touch, fade out a few seconds after the last interaction or when the mouse leaves
+      const show = () => { el.classList.add("tools-on"); clearTimeout(el._ht); }, hide = (ms) => { clearTimeout(el._ht); el._ht = setTimeout(() => el.classList.remove("tools-on"), ms); };
+      el.addEventListener("pointerdown", show, true); el.addEventListener("pointerup", () => hide(3500), true);
+      el.addEventListener("pointerleave", (e) => e.pointerType === "mouse" && !e.buttons && hide(1200));
       const id = it.id, pv = (el._pv = new PadView(el.querySelector("canvas"), (t, s) => link.send(t === "live" ? { type: "pad.live", id, k: s.k, s } : { type: "pad.stroke", id, stroke: s })));
-      padTools(el.querySelector(".ptools"), pv, (a) => link.send({ type: "pad." + a, id }), bg === "dark"); pv.set(pads[id]);
+      padTools(el.querySelector(".ptools"), pv, (a) => link.send({ type: "pad." + a, id })); pv.set(pads[id]);
     }
     else {
       const c = it.clock, st = c.style || "glass"; el.className = `it clk ${c.display} ${st === "glass" ? "glassy" : "s-" + st}`;
@@ -67,7 +71,7 @@ function upsert(it) {
   if (!(drag && drag.el === el)) el._L = L;
   Object.assign(el.style, { zIndex: it.z, fontFamily: fontCss(it.font) });
   el.style.setProperty("--fs", it.fontSize + "px");
-  if (it.kind === "pad") { if (el._t !== it.title) el.querySelector(".t").textContent = el._t = it.title; }
+  if (it.kind === "pad") {}
   else if (it.kind === "note") {
     if (el._t !== it.title) el.querySelector(".t").textContent = el._t = it.title;
     if (el._c !== it.content) el.querySelector(".b").innerHTML = renderMarkdown((el._c = it.content));
@@ -136,7 +140,7 @@ const sendLay = throttle((id, p) => link.send({ type: "layout.set", id, screen: 
 $("#items").addEventListener("pointerdown", (e) => {
   gesture(); wakeUi();
   const el = e.target.closest(".it"); if (!el || me.locked) return;
-  if (el.classList.contains("pad") && !e.target.closest(".hdr, .rz")) return; // pads: move by header only, ink area draws
+  if (el.classList.contains("pad") && !e.target.closest(".grip, .rz")) return; // pads: move by the ⠿ grip, ink area draws
   e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add("drag");
   drag = { el, id: el.dataset.id, x: e.clientX, y: e.clientY, o: { ...el._L }, rz: e.target.classList.contains("rz") };
   link.send({ type: "item.front", id: drag.id, screen: SID });
