@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Monitor Control</title>
 <link rel="stylesheet" href="/shared/fonts.css">
+<link rel="stylesheet" href="/shared/pad.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -25,13 +26,13 @@
       <div class="head"><h2>Screens</h2><button id="newScreen" class="btn sm" title="Open a new monitor screen">+ open</button></div>
       <ul id="screens" class="list"></ul>
       <div id="scrEdit">
-        <div class="row"><input id="scrName" class="in grow" placeholder="Screen name"><button id="scrLink" class="btn sm" title="Copy monitor link">🔗</button><button id="scrDel" class="btn sm ghost" title="Forget (offline only)">✕</button></div>
+        <div class="row"><input id="scrName" class="in grow" placeholder="Screen name"><label class="chk" title="Lock layout: no moving/resizing on the monitor itself"><input type="checkbox" id="scrLock">🔒</label><button id="scrLink" class="btn sm" title="Copy monitor link">🔗</button><button id="scrDel" class="btn sm ghost" title="Forget (offline only)">✕</button></div>
         <div class="row"><select id="scrScene" class="in grow"><option value="meadow">🌾 Meadow</option><option value="forest">🌲 Forest</option><option value="mountain">🏔 Mountain</option><option value="beach">🏖 Beach</option><option value="city">🏘 City</option></select>
-          <label class="chk" title="Stop moving/resizing items on the monitor itself"><input type="checkbox" id="scrLock"> 🔒</label><select id="scrFps" class="in" title="Frame rate cap"><option value="0">max fps</option><option value="120">120</option><option value="60">60</option><option value="30">30</option></select></div>
+          <select id="scrFps" class="in" title="Frame rate cap"><option value="0">max fps</option><option value="120">120</option><option value="60">60</option><option value="30">30</option></select></div>
       </div>
     </section>
     <section class="glass card grow-card">
-      <div class="head"><h2>Items</h2><button id="newNote" class="btn sm pri">+ Note</button><button id="newClock" class="btn sm pri">+ Clock</button></div>
+      <div class="head"><h2>Items</h2><button id="newNote" class="btn sm pri">+ Note</button><button id="newClock" class="btn sm pri">+ Clock</button><button id="newPad" class="btn sm pri">+ Pad</button></div>
       <ul id="list" class="list"></ul>
     </section>
   </div>
@@ -51,6 +52,10 @@
       <div id="noteEd" class="fill">
         <div class="row tabs"><button data-view="split" class="seg on">Split</button><button data-view="edit" class="seg">Edit</button><button data-view="prev" class="seg">Preview</button></div>
         <div id="panes" class="panes split"><textarea id="content" class="in md" spellcheck="false" placeholder="# Markdown here…"></textarea><div id="preview" class="md-view"></div></div>
+      </div>
+      <div id="padEd" class="fill" hidden>
+        <div class="row"><span class="mini">paper</span><div id="padBg" class="chips"></div></div>
+        <div class="padwrap"><div id="padPrev" class="padbox bg-paper"><div class="hdr"><span class="t dim">draw here or on the monitor</span><span id="padTools" class="ptools"></span></div><canvas class="ink-c"></canvas></div></div>
       </div>
       <div id="clockEd" hidden>
         <div class="row segs" id="cMode"><button data-v="clock" class="seg">🕰 clock</button><button data-v="timer" class="seg">⏱ timer</button><button data-v="countdown" class="seg">⏳ countdown</button><button data-v="alarm" class="seg">⏰ alarm</button></div>
@@ -112,6 +117,7 @@
 <script src="/shared/purify.min.js"></script>
 <script src="/shared/link.js"></script>
 <script src="/shared/fonts.js"></script>
+<script src="/shared/pad.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

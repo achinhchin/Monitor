@@ -12,7 +12,7 @@ const SEASON = ["🌸 spring", "☀ summer", "🍂 autumn", "❄ winter"], WX = 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), throttle = (fn, ms) => { let t = 0, a; return (...x) => { a = x; if (!t) t = setTimeout(() => { t = 0; fn(...a); }, ms); }; };
 const pad = (n, l = 2) => String(Math.floor(n)).padStart(l, "0");
 const hhmm = (h) => `${pad(h)}:${pad((h % 1) * 60)}`;
-let env = null, me = {}, skew = 0, fps = 0, battery = null;
+let env = null, me = {}, skew = 0, fps = 0, battery = null, pads = {};
 
 const stats = () => link.send({ type: "stats", patch: { w: innerWidth, h: innerHeight, dpr: devicePixelRatio || 1, fps: Math.round(fps), audio: !!(amb.ctx && amb.ctx.state === "running"), battery } });
 const link = new Link("monitor", {
@@ -20,11 +20,14 @@ const link = new Link("monitor", {
   status: (s) => $("#off").classList.toggle("show", s === "closed"),
   message: (m) => {
     if (m.type === "kicked") { link.stop(); amb.stop(); $("#kicked").hidden = false; }
-    else if (m.type === "welcome") { [...els.keys()].forEach(drop); items.clear(); m.items.forEach(upsert); screens(m.screens); setEnv(m.env); }
+    else if (m.type === "welcome") { [...els.keys()].forEach(drop); items.clear(); pads = m.pads || {}; m.items.forEach(upsert); screens(m.screens); setEnv(m.env); }
     else if (m.type === "item.upsert") upsert(m.item);
     else if (m.type === "item.remove") { items.delete(m.id); drop(m.id); }
     else if (m.type === "env") setEnv(m.env);
     else if (m.type === "screens") screens(m.screens);
+    else if (m.type === "pad.stroke") { (pads[m.id] ||= []).push(m.stroke); if (m.by !== link.id) els.get(m.id)?._pv?.add(m.stroke); }
+    else if (m.type === "pad.live") els.get(m.id)?._pv?.liveIn(m.k, m.s);
+    else if (m.type === "pad.set") { pads[m.id] = m.strokes || []; els.get(m.id)?._pv?.set(pads[m.id]); }
   },
 }, "&screen=" + encodeURIComponent(SID));
 
@@ -43,11 +46,17 @@ function upsert(it) {
   const L = it.layouts && it.layouts[SID];
   if (!L || !L.on) return drop(it.id);
   let el = els.get(it.id);
-  const sig = it.kind + (it.clock ? it.clock.display + it.clock.style : "");
+  const sig = it.kind + (it.clock ? it.clock.display + it.clock.style : "") + (it.pad ? it.pad.bg : "");
   if (!el || el.classList.contains("bye") || el._sig !== sig) {
     if (el) el.remove();
     el = document.createElement("div"); el._sig = sig; el.dataset.id = it.id; els.set(it.id, el);
     if (it.kind === "note") { el.className = "it note glassy"; el.innerHTML = `<div class="t"></div><div class="b"></div>`; }
+    else if (it.kind === "pad") {
+      const bg = (it.pad && it.pad.bg) || "paper"; el.className = `it pad padbox bg-${bg}`;
+      el.innerHTML = `<div class="hdr"><span class="t"></span><span class="ptools"></span></div><canvas class="ink-c"></canvas>`;
+      const id = it.id, pv = (el._pv = new PadView(el.querySelector("canvas"), (t, s) => link.send(t === "live" ? { type: "pad.live", id, k: s.k, s } : { type: "pad.stroke", id, stroke: s })));
+      padTools(el.querySelector(".ptools"), pv, (a) => link.send({ type: "pad." + a, id }), bg === "dark"); pv.set(pads[id]);
+    }
     else {
       const c = it.clock, st = c.style || "glass"; el.className = `it clk ${c.display} ${st === "glass" ? "glassy" : "s-" + st}`;
       el.innerHTML = c.display === "analog" ? analogSVG() : `<div class="dg"><div class="big"><span class="mn"></span><small></small></div><div class="sub"></div><div class="bar"><i></i></div></div>`;
@@ -58,12 +67,13 @@ function upsert(it) {
   if (!(drag && drag.el === el)) el._L = L;
   Object.assign(el.style, { zIndex: it.z, fontFamily: fontCss(it.font) });
   el.style.setProperty("--fs", it.fontSize + "px");
-  if (it.kind === "note") {
+  if (it.kind === "pad") { if (el._t !== it.title) el.querySelector(".t").textContent = el._t = it.title; }
+  else if (it.kind === "note") {
     if (el._t !== it.title) el.querySelector(".t").textContent = el._t = it.title;
     if (el._c !== it.content) el.querySelector(".b").innerHTML = renderMarkdown((el._c = it.content));
   } else tickClock(el, it);
 }
-function drop(id) { const el = els.get(id); if (!el) return; els.delete(id); el.classList.add("bye"); setTimeout(() => el.remove(), 500); }
+function drop(id) { const el = els.get(id); if (!el) return; els.delete(id); el._pv && el._pv.ro.disconnect(); el.classList.add("bye"); setTimeout(() => el.remove(), 500); }
 
 function analogSVG() {
   let t = ""; for (let i = 0; i < 60; i++) { const a = i * 6 * Math.PI / 180, r1 = i % 5 ? 43 : 39; t += `<line class="tk" x1="${50 + Math.sin(a) * r1}" y1="${50 - Math.cos(a) * r1}" x2="${50 + Math.sin(a) * 45}" y2="${50 - Math.cos(a) * 45}" stroke-width="${i % 5 ? .6 : 1.6}" opacity="${i % 5 ? .4 : .85}"/>`; }
@@ -126,6 +136,7 @@ const sendLay = throttle((id, p) => link.send({ type: "layout.set", id, screen: 
 $("#items").addEventListener("pointerdown", (e) => {
   gesture(); wakeUi();
   const el = e.target.closest(".it"); if (!el || me.locked) return;
+  if (el.classList.contains("pad") && !e.target.closest(".hdr, .rz")) return; // pads: move by header only, ink area draws
   e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add("drag");
   drag = { el, id: el.dataset.id, x: e.clientX, y: e.clientY, o: { ...el._L }, rz: e.target.classList.contains("rz") };
   link.send({ type: "item.front", id: drag.id, screen: SID });

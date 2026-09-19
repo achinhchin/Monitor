@@ -1,7 +1,7 @@
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
 document.head.appendChild(Object.assign(document.createElement("link"), { rel: "stylesheet", href: FONT_CSS }));
 const items = new Map(), SEASON = ["🌸 spring", "☀️ summer", "🍂 autumn", "❄️ winter"], SCENE_I = { meadow: "🌾", forest: "🌲", mountain: "🏔", beach: "🏖", city: "🏘" }, WX = { clear: "☀ clear", cloudy: "☁ cloudy", rain: "☂ rain", storm: "⛈ storm" };
-let screens = [], env = null, sel = null, scr = localStorage.getItem("selScr"), skew = 0;
+let screens = [], env = null, pads = {}, sel = null, scr = localStorage.getItem("selScr"), skew = 0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), pad = (n) => String(Math.floor(n)).padStart(2, "0");
 const hhmm = (h) => `${pad(h)}:${pad((h % 1) * 60)}`, mmss = (ms) => { const s = Math.max(0, ms) / 1000; return s >= 3600 ? `${s / 3600 | 0}h${pad(s / 60 % 60)}m` : `${s / 60 | 0}m${pad(s % 60)}s`; };
 const dur = (ms) => { const s = Math.max(0, ms) / 1000, h = s / 3600 | 0; return (h ? h + ":" : "") + pad(s / 60 % 60) + ":" + pad(s % 60); };
@@ -11,10 +11,13 @@ const link = new Link("control", {
   status: (s) => { const c = $("#conn"); c.className = "pill " + (s === "open" ? "on-link" : "off-link"); c.lastChild.textContent = s; },
   message(m) {
     switch (m.type) {
-      case "welcome": items.clear(); m.items.forEach((i) => items.set(i.id, i)); screens = m.screens; pickScreen(); setEnv(m.env); renderAll(); break;
+      case "welcome": items.clear(); pads = m.pads || {}; m.items.forEach((i) => items.set(i.id, i)); screens = m.screens; pickScreen(); setEnv(m.env); renderAll(); break;
       case "item.upsert": { const mine = m.by === link.id, fresh = !items.has(m.item.id); items.set(m.item.id, m.item); if (fresh && mine) select(m.item.id); renderList(); renderStage(); if (m.item.id === sel) fillEditor(); break; }
       case "item.remove": items.delete(m.id); if (sel === m.id) select(null); renderList(); renderStage(); break;
       case "env": setEnv(m.env); break;
+      case "pad.stroke": (pads[m.id] ||= []).push(m.stroke); if (m.id === sel && m.by !== link.id) pv.add(m.stroke); break;
+      case "pad.live": if (m.id === sel) pv.liveIn(m.k, m.s); break;
+      case "pad.set": pads[m.id] = m.strokes || []; if (m.id === sel) pv.set(pads[m.id]); break;
       case "screens": screens = m.screens; pickScreen(); renderScreens(); renderList(); fillPos(); renderStage(); renderStatus(); break;
     }
   },
@@ -54,14 +57,14 @@ $("#scrLink").onclick = () => { const u = `${location.origin}/monitor/?screen=${
 $("#newScreen").onclick = () => window.open(`/monitor/?screen=screen-${Math.random().toString(36).slice(2, 6)}`, "_blank");
 
 // ── items list & editor ──
-const patchItem = (id, p) => { const it = items.get(id); if (!it) return; for (const k in p) k === "clock" ? Object.assign(it.clock, p.clock) : (it[k] = p[k]); send({ type: "item.update", id, patch: p }); };
+const patchItem = (id, p) => { const it = items.get(id); if (!it) return; for (const k in p) (k === "clock" || k === "pad") && it[k] ? Object.assign(it[k], p[k]) : (it[k] = p[k]); send({ type: "item.update", id, patch: p }); };
 const setLay = (id, p, screen = scr) => { const it = items.get(id); if (!it || !screen) return; if (screen === "*") for (const k in it.layouts) Object.assign(it.layouts[k], p); else Object.assign(it.layouts[screen] || {}, p); send({ type: "layout.set", id, screen, patch: p }); };
 function renderList() {
   const ul = $("#list"); ul.innerHTML = "";
   [...items.values()].sort((a, b) => a.created - b.created).forEach((it) => {
     const L = lay(it), li = document.createElement("li");
     li.className = (it.id === sel ? "sel " : "") + (L && L.on ? "" : "off");
-    li.innerHTML = `<span>${it.kind === "clock" ? { clock: "🕰", timer: "⏱", countdown: "⏳", alarm: "⏰" }[it.clock.mode] : "📝"}</span><span class="t"></span><span class="meta"></span><label class="sw"><input type="checkbox" ${L && L.on ? "checked" : ""} ${L ? "" : "disabled"}><span></span></label>`;
+    li.innerHTML = `<span>${it.kind === "clock" ? { clock: "🕰", timer: "⏱", countdown: "⏳", alarm: "⏰" }[it.clock.mode] : it.kind === "pad" ? "✏️" : "📝"}</span><span class="t"></span><span class="meta"></span><label class="sw"><input type="checkbox" ${L && L.on ? "checked" : ""} ${L ? "" : "disabled"}><span></span></label>`;
     li.querySelector(".t").textContent = it.title || "Untitled";
     li.onclick = (e) => { if (!e.target.closest(".sw")) select(it.id); };
     li.querySelector("input").onchange = (e) => { setLay(it.id, { on: e.target.checked }); renderList(); renderStage(); if (it.id === sel) $("#enabled").checked = e.target.checked; };
@@ -74,7 +77,14 @@ function fillEditor() {
   const set = (el, v) => { if (document.activeElement !== el) el.value = v; };
   set($("#title"), it.title); set($("#fs"), it.fontSize); $("#font").value = it.font || "blex";
   const L = lay(it); $("#enabled").checked = !!(L && L.on); $("#enabled").disabled = !L;
-  const clock = it.kind === "clock"; $("#noteEd").hidden = clock; $("#clockEd").hidden = !clock;
+  const clock = it.kind === "clock", pad = it.kind === "pad"; $("#noteEd").hidden = clock || pad; $("#clockEd").hidden = !clock; $("#padEd").hidden = !pad;
+  if (pad) {
+    const bg = (it.pad && it.pad.bg) || "paper", s = size(); $("#padPrev").className = "padbox bg-" + bg;
+    $$("#padBg .seg").forEach((b) => b.classList.toggle("on", b.dataset.v === bg));
+    if (L) $("#padPrev").style.aspectRatio = `${(L.w * s.w).toFixed(0)} / ${(L.h * s.h).toFixed(0)}`;
+    if (pv._for !== it.id || pv._bg !== bg) { pv._for = it.id; pv._bg = bg; padTools($("#padTools"), pv, (a) => send({ type: "pad." + a, id: sel }), bg === "dark"); pv.set(pads[it.id]); }
+    return;
+  }
   if (!clock) { set($("#content"), it.content); $("#preview").innerHTML = renderMarkdown(it.content); return; }
   const c = it.clock;
   $$("#cMode .seg").forEach((b) => b.classList.toggle("on", b.dataset.v === c.mode));
@@ -109,6 +119,10 @@ $("#enabled").onchange = (e) => { if (sel) { setLay(sel, { on: e.target.checked 
 $("#del").onclick = () => { const it = cur(); if (it && confirm(`Delete "${it.title}"?`)) send({ type: "item.delete", id: it.id }); };
 $("#newNote").onclick = () => send({ type: "item.create", kind: "note" });
 $("#newClock").onclick = () => send({ type: "item.create", kind: "clock" });
+$("#newPad").onclick = () => send({ type: "item.create", kind: "pad" });
+const pv = new PadView($("#padPrev canvas"), (t, s) => sel && send(t === "live" ? { type: "pad.live", id: sel, k: s.k, s } : { type: "pad.stroke", id: sel, stroke: s }));
+$("#padBg").innerHTML = PAD_BGS.map((b) => `<button class="seg" data-v="${b}">${b}</button>`).join("");
+$("#padBg").onclick = (e) => { const b = e.target.closest(".seg"); if (b && sel) { patchItem(sel, { pad: { bg: b.dataset.v } }); fillEditor(); } };
 $$(".tabs .seg").forEach((b) => (b.onclick = () => { $$(".tabs .seg").forEach((x) => x.classList.toggle("on", x === b)); $("#panes").className = "panes " + b.dataset.view; }));
 const clk = (p) => { if (sel) { patchItem(sel, { clock: p }); fillEditor(); renderList(); } };
 $$("#cMode .seg").forEach((b) => (b.onclick = () => clk({ mode: b.dataset.v, running: false, acc: 0, ringing: false })));

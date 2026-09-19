@@ -12,7 +12,8 @@ import (
 const schema = `
 CREATE TABLE IF NOT EXISTS items   (id TEXT PRIMARY KEY, kind TEXT NOT NULL, created INTEGER NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS screens (id TEXT PRIMARY KEY, name TEXT NOT NULL, scene TEXT NOT NULL, data TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS kv      (k TEXT PRIMARY KEY, v TEXT NOT NULL);`
+CREATE TABLE IF NOT EXISTS kv      (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS pads    (item_id TEXT PRIMARY KEY, strokes TEXT NOT NULL);`
 
 type Store struct{ db *sql.DB }
 
@@ -24,8 +25,8 @@ type row struct {
 
 // snapshot is taken under the hub lock, written to disk outside it
 type snapshot struct {
-	items, screens []row
-	env            []byte
+	items, screens, pads []row
+	env                  []byte
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -74,6 +75,19 @@ func (s *Store) Load() (p persisted, err error) {
 		}
 	}
 	rows.Close()
+	p.Pads = map[string][]Stroke{}
+	if rows, err = s.db.Query(`SELECT item_id, strokes FROM pads`); err != nil {
+		return
+	}
+	for rows.Next() {
+		var id string
+		var b []byte
+		var st []Stroke
+		if rows.Scan(&id, &b) == nil && json.Unmarshal(b, &st) == nil {
+			p.Pads[id] = st
+		}
+	}
+	rows.Close()
 	var b []byte
 	if s.db.QueryRow(`SELECT v FROM kv WHERE k='env'`).Scan(&b) == nil {
 		_ = json.Unmarshal(b, &p.Env)
@@ -88,7 +102,7 @@ func (s *Store) Save(sn snapshot) error {
 		return err
 	}
 	defer tx.Rollback()
-	for _, q := range []string{`DELETE FROM items`, `DELETE FROM screens`} {
+	for _, q := range []string{`DELETE FROM items`, `DELETE FROM screens`, `DELETE FROM pads`} {
 		if _, err = tx.Exec(q); err != nil {
 			return err
 		}
@@ -100,6 +114,11 @@ func (s *Store) Save(sn snapshot) error {
 	}
 	for _, r := range sn.screens {
 		if _, err = tx.Exec(`INSERT INTO screens(id,name,scene,data) VALUES(?,?,?,?)`, r.id, r.a, r.b, r.data); err != nil {
+			return err
+		}
+	}
+	for _, r := range sn.pads {
+		if _, err = tx.Exec(`INSERT INTO pads(item_id,strokes) VALUES(?,?)`, r.id, r.data); err != nil {
 			return err
 		}
 	}

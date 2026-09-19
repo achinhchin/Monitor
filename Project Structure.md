@@ -16,6 +16,7 @@ web/               embedded into the binary (rebuild after editing!)
   index.html       landing page
   shared/
     link.js        Link(role, handlers, query): reconnecting WS + 6s liveness watchdog; renderMarkdown(); escapeHTML()
+    pad.js / pad.css  PadView (pressure ink, palm rejection, live streaming, eraser, undo) + padTools toolbar, used by monitor and control
     fonts.js       FONTS {id:[label, css stack]}, FONT_CSS (Google Fonts URL), CLOCK_STYLES, fontCss(id)
     fonts.css      local Blex Mono → bundled IBM Plex Mono (var(--mono))
     marked.min.js, purify.min.js, fonts/*.woff2   vendored
@@ -46,7 +47,7 @@ The `data` and `v` columns hold the JSON of the Go structs, so fields can be que
 
 ## Data model (hub.go)
 - `Screen{id,name,scene,fpsCap,locked,w,h,dpr,online,fps,audio,battery,lastSeen}` is created the first time a monitor connects with that id. Monitors report their size, fps, audio state and battery through `stats`. A second connection with the same screen id **kicks the older one**; different ids coexist.
-- `Item{id,kind:"note"|"clock",title,content,font,fontSize,z,clock?,layouts{screenId: Layout}}`
+- `Item{id,kind:"note"|"clock"|"pad",title,content,font,fontSize,z,clock?,pad?{bg},layouts{screenId: Layout}}`
   - `Layout{x,y,w,h,on}` stores fractions of that screen's viewport. Every item has one layout per screen: notes default to the bottom right, clocks to the top right.
   - `Clock{mode: clock|timer|countdown|alarm, display: digital|analog, style, duration, running, startAt, acc, alarm "HH:MM", ringing, ringAt, fired}`. Elapsed time is `acc + (running ? now-startAt : 0)`, using server epoch ms; monitors correct for clock skew with `serverTime`. For an alarm, `running` means armed.
   - `checkClocks` runs every second: a finished countdown or a matching alarm time (in **server local time**) sets `ringing`, which clears itself after 3 minutes or when dismissed.
@@ -55,6 +56,12 @@ The `data` and `v` columns hold the JSON of the Go structs, so fields can be que
   - Weather `w{state, intensity, cloud, left}` is a Markov chain running on virtual time: clear → cloudy → rain ⇄ storm. The `rain` knob biases it toward wet weather. Setting `weatherMode` to anything other than auto fixes the weather.
   - `knobDefs` holds the knob defaults and is sent to clients for the ↺ reset buttons.
 - The env view is broadcast every 1s and after every change. It includes the derived fields `phase, isDay, hour, season, seasonProgress, seasonLeftMs, weather (effective), cycleMs, serverTime, knobDefs`.
+
+## Scratch pads
+- The ink is stored outside the Item, in `Hub.pads[id] []Stroke` (SQLite table `pads`), so layout updates stay small. The welcome message carries `pads`.
+- `Stroke{k,c,w,e,p}` holds points as flat `x,y,pressure` triples. x and y are divided by the pad canvas width, so writing keeps its shape when the pad is resized or shown on a screen with a different aspect ratio.
+- Messages: `pad.live{id,k,s}` is relayed to other clients while drawing (not stored); `pad.stroke{id,stroke}` appends and is broadcast; `pad.undo` and `pad.clear` answer with `pad.set{id,strokes}`. Each pad is capped at 3000 strokes and 30k points per stroke.
+- On the monitor, a pad moves by its header and resizes by its corner, and the ink area draws. Drawing works even when the screen is locked. Touch input is ignored for 3s after a pen is used, for palm rejection.
 
 ## WebSocket protocol (`/ws?role=control` | `/ws?role=monitor&screen=<id>`)
 Client → server (`type`, fields):

@@ -64,6 +64,7 @@ type Item struct {
 	FontSize float64            `json:"fontSize"`
 	Z        int                `json:"z"`
 	Clock    *Clock             `json:"clock,omitempty"`
+	Pad      *Pad               `json:"pad,omitempty"`
 	L        map[string]*Layout `json:"layouts"`
 	Created  int64              `json:"created"`
 }
@@ -119,16 +120,34 @@ type Client struct {
 }
 
 type persisted struct {
-	Items   []*Item   `json:"items"`
-	Screens []*Screen `json:"screens"`
-	Env     Env       `json:"env"`
+	Items   []*Item             `json:"items"`
+	Screens []*Screen           `json:"screens"`
+	Env     Env                 `json:"env"`
+	Pads    map[string][]Stroke `json:"pads"`
 }
+
+// Pad is a scratch pad; its ink lives in Hub.pads so layout updates stay small.
+type Pad struct {
+	Bg string `json:"bg"` // paper | grid | dark | glass
+}
+
+// Stroke points are x,y,pressure triples; x and y are normalised by the pad's width (keeps aspect).
+type Stroke struct {
+	K string    `json:"k,omitempty"`
+	C string    `json:"c"`
+	W float64   `json:"w"`
+	E bool      `json:"e,omitempty"`
+	P []float64 `json:"p"`
+}
+
+const maxStrokes, maxPoints = 3000, 30000
 
 type Hub struct {
 	mu      sync.Mutex
 	clients map[string]*Client
 	items   map[string]*Item
 	screens map[string]*Screen
+	pads    map[string][]Stroke
 	env     Env
 	store   *Store
 	dirty   bool
@@ -138,7 +157,7 @@ type Hub struct {
 
 func NewHub(store *Store, legacyJSON string) *Hub {
 	h := &Hub{
-		clients: map[string]*Client{}, items: map[string]*Item{}, screens: map[string]*Screen{},
+		clients: map[string]*Client{}, items: map[string]*Item{}, screens: map[string]*Screen{}, pads: map[string][]Stroke{},
 		store: store, quit: make(chan struct{}),
 		env: Env{DayMin: 10, NightMin: 10, SeasonMin: [4]float64{60, 60, 60, 60}, Speed: 1, WeatherMode: "auto",
 			ShowHud: true, Knobs: map[string]float64{}, W: Weather{State: "clear", Cloud: .3, Left: 5 * minute}},
@@ -179,6 +198,11 @@ func (h *Hub) load(legacyJSON string) {
 			h.items[it.ID] = it
 		}
 	}
+	for id, st := range p.Pads {
+		if h.items[id] != nil {
+			h.pads[id] = st
+		}
+	}
 	for _, s := range p.Screens {
 		if s != nil && s.ID != "" {
 			s.Online = false
@@ -205,6 +229,9 @@ func (h *Hub) save() {
 		sn.screens = append(sn.screens, row{id: s.ID, a: s.Name, b: s.Scene, data: mustJSON(s)})
 	}
 	sn.env = mustJSON(h.env)
+	for id, st := range h.pads {
+		sn.pads = append(sn.pads, row{id: id, data: mustJSON(st)})
+	}
 	h.dirty = false
 	h.mu.Unlock()
 	if err := h.store.Save(sn); err != nil {
@@ -477,6 +504,9 @@ type inbound struct {
 	Kind   string          `json:"kind"`
 	Act    string          `json:"act"`
 	Patch  json.RawMessage `json:"patch"`
+	K      string          `json:"k"`
+	S      json.RawMessage `json:"s"`
+	Stroke *Stroke         `json:"stroke"`
 }
 
 func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
@@ -513,7 +543,7 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) {
 		h.dirty = true
 	}
 	h.clients[c.id] = c
-	c.send <- mustJSON(map[string]any{"type": "welcome", "id": c.id, "items": h.sortedItems(), "screens": h.screenList(), "env": h.envView()})
+	c.send <- mustJSON(map[string]any{"type": "welcome", "id": c.id, "items": h.sortedItems(), "pads": h.pads, "screens": h.screenList(), "env": h.envView()})
 	h.bcastScreens()
 	h.mu.Unlock()
 	log.Printf("+ %s %s %s", role, sid, r.RemoteAddr)
@@ -607,12 +637,46 @@ func (h *Hub) handle(c *Client, m inbound) {
 		}
 		h.bcast(itemMsg(it, c.id))
 
+	// scratch pads: anyone (monitor or control) can draw
+	case it != nil && it.Kind == "pad" && m.Type == "pad.live":
+		for _, o := range h.clients {
+			if o != c {
+				h.sendLocked(o, mustJSON(map[string]any{"type": "pad.live", "id": it.ID, "k": m.K, "s": m.S}))
+			}
+		}
+
+	case it != nil && it.Kind == "pad" && m.Type == "pad.stroke" && m.Stroke != nil:
+		st := *m.Stroke
+		if len(st.P) == 0 || len(st.P)%3 != 0 || len(st.P) > maxPoints {
+			return
+		}
+		st.W = clamp(st.W, .001, .08)
+		list := append(h.pads[it.ID], st)
+		if len(list) > maxStrokes {
+			list = list[len(list)-maxStrokes:]
+		}
+		h.pads[it.ID] = list
+		h.dirty = true
+		h.bcast(mustJSON(map[string]any{"type": "pad.stroke", "id": it.ID, "stroke": st, "by": c.id}))
+
+	case it != nil && it.Kind == "pad" && (m.Type == "pad.undo" || m.Type == "pad.clear"):
+		if l := h.pads[it.ID]; m.Type == "pad.undo" && len(l) > 0 {
+			h.pads[it.ID] = l[:len(l)-1]
+		} else if m.Type == "pad.clear" {
+			delete(h.pads, it.ID)
+		}
+		h.dirty = true
+		h.bcast(mustJSON(map[string]any{"type": "pad.set", "id": it.ID, "strokes": h.pads[it.ID]}))
+
 	case !ctl:
 		return
 
 	case m.Type == "item.create":
 		it = &Item{ID: newID(), Kind: "note", Title: "Note", Content: "# Hello\n\nWrite **markdown** here.", Font: "blex", FontSize: 16,
 			Z: h.maxZ() + 1, Created: time.Now().UnixMilli(), L: map[string]*Layout{}}
+		if m.Kind == "pad" {
+			it.Kind, it.Title, it.Content, it.Pad = "pad", "Scratch pad", "", &Pad{Bg: "paper"}
+		}
 		if m.Kind == "clock" {
 			it.Kind, it.Title, it.Content, it.FontSize = "clock", "Clock", "", 28
 			it.Clock = &Clock{Mode: "clock", Display: "digital", Style: "glass", Duration: 5 * 60_000, Alarm: "07:00"}
@@ -671,6 +735,9 @@ func (h *Hub) handle(c *Client, m inbound) {
 		if kind == "clock" && it.Clock == nil {
 			it.Clock = clk
 		}
+		if kind == "pad" && it.Pad == nil {
+			it.Pad = &Pad{Bg: "paper"}
+		}
 		fixItem(it)
 		h.dirty = true
 		h.bcast(itemMsg(it, c.id))
@@ -703,6 +770,7 @@ func (h *Hub) handle(c *Client, m inbound) {
 
 	case m.Type == "item.delete":
 		delete(h.items, it.ID)
+		delete(h.pads, it.ID)
 		h.dirty = true
 		h.bcast(mustJSON(map[string]any{"type": "item.remove", "id": it.ID}))
 	}
@@ -756,6 +824,9 @@ func itemMsg(it *Item, by string) []byte {
 }
 
 func defLayout(kind string) *Layout {
+	if kind == "pad" {
+		return &Layout{X: .03, Y: .28, W: .34, H: .45, On: true}
+	}
 	if kind == "clock" {
 		return &Layout{X: .985 - .2, Y: .08, W: .2, H: .16, On: true}
 	}
