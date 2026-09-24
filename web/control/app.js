@@ -64,7 +64,7 @@ function renderList() {
   [...items.values()].sort((a, b) => a.created - b.created).forEach((it) => {
     const L = lay(it), li = document.createElement("li");
     li.className = (it.id === sel ? "sel " : "") + (L && L.on ? "" : "off");
-    li.innerHTML = `<span>${it.kind === "clock" ? { clock: "🕰", timer: "⏱", countdown: "⏳", alarm: "⏰" }[it.clock.mode] : it.kind === "pad" ? "✏️" : "📝"}</span><span class="t"></span><span class="meta"></span><label class="sw"><input type="checkbox" ${L && L.on ? "checked" : ""} ${L ? "" : "disabled"}><span></span></label>`;
+    li.innerHTML = `<span>${it.kind === "clock" ? { clock: "🕰", timer: "⏱", countdown: "⏳", alarm: "⏰", pomodoro: "🍅" }[it.clock.mode] : it.kind === "pad" ? "✏️" : "📝"}</span><span class="t"></span><span class="meta"></span><label class="sw"><input type="checkbox" ${L && L.on ? "checked" : ""} ${L ? "" : "disabled"}><span></span></label>`;
     li.querySelector(".t").textContent = it.title || "Untitled";
     li.onclick = (e) => { if (!e.target.closest(".sw")) select(it.id); };
     li.querySelector("input").onchange = (e) => { setLay(it.id, { on: e.target.checked }); renderList(); renderStage(); if (it.id === sel) $("#enabled").checked = e.target.checked; };
@@ -90,18 +90,24 @@ function fillEditor() {
   $$("#cMode .seg").forEach((b) => b.classList.toggle("on", b.dataset.v === c.mode));
   $$("#cDisp .seg").forEach((b) => b.classList.toggle("on", b.dataset.v === c.display));
   $$("#cStyle .seg").forEach((b) => b.classList.toggle("on", b.dataset.v === (c.style || "glass")));
-  $("#cDur").hidden = c.mode !== "countdown"; $("#cAlarm").hidden = c.mode !== "alarm"; $("#cCtl").hidden = c.mode === "clock";
+  $("#cDur").hidden = c.mode !== "countdown"; $("#cAlarm").hidden = c.mode !== "alarm"; $("#cCtl").hidden = c.mode === "clock"; $("#cPomo").hidden = c.mode !== "pomodoro"; $("#skipBtn").hidden = c.mode !== "pomodoro";
+  const p = c.pomo || {};
+  $$("[data-pk]").forEach((i) => set(i, p[i.dataset.pk] ?? "")); $$("[data-pb]").forEach((i) => (i.checked = !!p[i.dataset.pb])); set($("#pLabel"), p.label || "");
+  $$("#pPre .seg").forEach((b) => b.classList.toggle("on", b.dataset.p === [p.focus, p.short, p.long, p.rounds].join(",")));
+  $("#pDone").textContent = `${p.done || 0} focus session${p.done === 1 ? "" : "s"} done`;
   $$("#cCtl [data-act=start],#cCtl [data-act=pause],#cCtl [data-act=reset]").forEach((b) => (b.hidden = c.mode === "alarm"));
   $("#dismiss").hidden = !c.ringing;
   const d = c.duration; $$("#cDur input").forEach((i) => set(i, Math.floor(d / +i.dataset.u) % (i.dataset.u === "3600000" ? 1000 : 60)));
-  set($("#alarmAt"), c.alarm); $("#armed").checked = c.running;
+  const [ah, am] = (c.alarm || "07:00").split(":"); set($("#alH"), +ah); set($("#alM"), am); $("#armed").checked = c.running;
   liveClock();
 }
 function liveClock() {
   const it = cur(); if (!it || it.kind !== "clock") return;
   const c = it.clock, now = Date.now() + skew, el = c.acc + (c.running ? now - c.startAt : 0);
   const [big, sub] = c.ringing ? ["⏰", "ringing — press stop"] : c.mode === "timer" ? [dur(el), c.running ? "running" : "paused"] : c.mode === "countdown" ? [dur(c.duration - el + (c.running ? 999 : 0)), c.running ? "running" : "paused"]
-    : c.mode === "alarm" ? [c.alarm, c.running ? "armed" : "off"] : [new Date(now).toLocaleTimeString(), "local time on monitor"];
+    : c.mode === "alarm" ? [c.alarm, c.running ? "armed" : "off"]
+    : c.mode === "pomodoro" && c.pomo ? [dur(c.duration - el + (c.running ? 999 : 0)), `${c.pomo.phase === "focus" ? c.pomo.label || "Focus" : c.pomo.phase === "short" ? "Short break" : "Long break"} · round ${c.pomo.round}/${c.pomo.rounds}${c.running ? "" : " · paused"}`]
+    : [new Date(now).toLocaleTimeString("en-US"), "local time on monitor"];
   const v = `${big}<small>${sub}</small>`; if ($("#cLive")._v !== v) $("#cLive").innerHTML = $("#cLive")._v = v;
   $("#dismiss").hidden = !c.ringing;
 }
@@ -130,7 +136,14 @@ $$("#cMode .seg").forEach((b) => (b.onclick = () => clk({ mode: b.dataset.v, run
 $$("#cDisp .seg").forEach((b) => (b.onclick = () => clk({ display: b.dataset.v })));
 $("#cStyle").onclick = (e) => { const b = e.target.closest(".seg"); if (b) clk({ style: b.dataset.v }); };
 $$("#cDur input").forEach((i) => (i.onchange = () => clk({ duration: Math.max(1000, $$("#cDur input").reduce((a, x) => a + (+x.value || 0) * +x.dataset.u, 0)), acc: 0, running: false })));
-$("#alarmAt").onchange = (e) => clk({ alarm: e.target.value, fired: "" });
+const setAlarm = () => clk({ alarm: `${pad(clamp(+$("#alH").value || 0, 0, 23))}:${pad(clamp(+$("#alM").value || 0, 0, 59))}`, fired: "" });
+$("#alH").onchange = $("#alM").onchange = setAlarm;
+const pomo = (patch) => { const it = cur(); if (it && it.clock) clk({ pomo: { ...(it.clock.pomo || {}), ...patch } }); };
+$$("[data-pk]").forEach((i) => (i.onchange = () => pomo({ [i.dataset.pk]: +i.value })));
+$$("[data-pb]").forEach((i) => (i.onchange = () => pomo({ [i.dataset.pb]: i.checked })));
+$("#pLabel").onchange = (e) => pomo({ label: e.target.value.trim() || "Focus" });
+$$("#pPre .seg").forEach((b) => (b.onclick = () => { const [focus, short, long, rounds] = b.dataset.p.split(",").map(Number); pomo({ focus, short, long, rounds }); }));
+$("#pResetCount").onclick = () => sel && send({ type: "clock.act", id: sel, act: "resetcount" });
 $("#armed").onchange = (e) => sel && send({ type: "clock.act", id: sel, act: e.target.checked ? "start" : "pause" });
 $$("#cCtl [data-act]").forEach((b) => (b.onclick = () => sel && send({ type: "clock.act", id: sel, act: b.dataset.act })));
 

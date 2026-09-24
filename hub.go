@@ -41,6 +41,56 @@ type Layout struct {
 	On bool    `json:"on"`
 }
 
+// Pomo holds pomodoro settings and progress; the running phase reuses Clock.Running/StartAt/Acc/Duration.
+type Pomo struct {
+	Focus     float64 `json:"focus"` // minutes
+	Short     float64 `json:"short"`
+	Long      float64 `json:"long"`
+	Rounds    int     `json:"rounds"` // focus rounds before a long break
+	AutoBreak bool    `json:"autoBreak"`
+	AutoFocus bool    `json:"autoFocus"`
+	Sound     bool    `json:"sound"`
+	Dots      bool    `json:"dots"`
+	Label     string  `json:"label"`
+	Phase     string  `json:"phase"` // focus | short | long
+	Round     int     `json:"round"`
+	Done      int     `json:"done"` // completed focus sessions
+}
+
+func newPomo() *Pomo {
+	return &Pomo{Focus: 25, Short: 5, Long: 15, Rounds: 4, AutoBreak: true, Sound: true, Dots: true, Label: "Focus", Phase: "focus", Round: 1}
+}
+
+func (p *Pomo) dur() int64 {
+	m := map[string]float64{"focus": p.Focus, "short": p.Short, "long": p.Long}[p.Phase]
+	return int64(m * minute)
+}
+
+// next moves to the following phase; natural=true means the phase ran out (counts a finished focus)
+func (c *Clock) pomoNext(now int64, natural bool) {
+	p := c.Pomo
+	if p.Phase == "focus" {
+		if natural {
+			p.Done++
+		}
+		if p.Round >= p.Rounds {
+			p.Phase = "long"
+		} else {
+			p.Phase = "short"
+		}
+	} else {
+		if p.Phase == "long" {
+			p.Round = 1
+		} else {
+			p.Round++
+		}
+		p.Phase = "focus"
+	}
+	c.Acc, c.StartAt, c.Duration = 0, now, p.dur()
+	c.Running = natural && ((p.Phase == "focus" && p.AutoFocus) || (p.Phase != "focus" && p.AutoBreak)) || (!natural && c.Running)
+	c.Chimes++
+}
+
 type Clock struct {
 	Mode     string `json:"mode"`    // clock | timer | countdown | alarm
 	Display  string `json:"display"` // digital | analog
@@ -53,6 +103,8 @@ type Clock struct {
 	Ringing  bool   `json:"ringing"`
 	RingAt   int64  `json:"ringAt"`
 	Fired    string `json:"fired"`
+	Chimes   int    `json:"chimes"` // bumps on each pomodoro phase change so screens can chime
+	Pomo     *Pomo  `json:"pomo,omitempty"`
 }
 
 type Item struct {
@@ -462,6 +514,10 @@ func (h *Hub) checkClocks(now time.Time) {
 		if key := now.Format("2006-01-02 ") + c.Alarm; c.Mode == "alarm" && c.Running && now.Format("15:04") == c.Alarm && c.Fired != key {
 			c.Fired, c.Ringing, c.RingAt, changed = key, true, ms, true
 		}
+		if c.Mode == "pomodoro" && c.Pomo != nil && c.Running && c.Acc+ms-c.StartAt >= c.Duration {
+			c.pomoNext(ms, true)
+			changed = true
+		}
 		if c.Ringing && ms-c.RingAt > 3*60_000 {
 			c.Ringing, changed = false, true
 		}
@@ -491,6 +547,20 @@ func clockAct(c *Clock, act string) {
 		c.Acc, c.StartAt = 0, now
 		if c.Mode != "alarm" {
 			c.Running = false
+		}
+		if c.Pomo != nil && c.Mode == "pomodoro" {
+			c.Pomo.Phase, c.Pomo.Round, c.Duration = "focus", 1, int64(c.Pomo.Focus*minute)
+		}
+	case "skip":
+		if c.Pomo != nil && c.Mode == "pomodoro" {
+			if c.Running {
+				c.Acc += now - c.StartAt
+			}
+			c.pomoNext(now, false)
+		}
+	case "resetcount":
+		if c.Pomo != nil {
+			c.Pomo.Done = 0
 		}
 	}
 	c.Ringing = false
@@ -854,6 +924,22 @@ func fixItem(it *Item) {
 	it.FontSize = clamp(it.FontSize, 6, 200)
 	if c := it.Clock; c != nil {
 		c.Duration = int64(clamp(float64(c.Duration), 1000, 100*3600_000))
+		if c.Mode == "pomodoro" {
+			if c.Pomo == nil {
+				c.Pomo = newPomo()
+			}
+			p := c.Pomo
+			p.Focus, p.Short, p.Long = clamp(p.Focus, 1, 240), clamp(p.Short, 1, 60), clamp(p.Long, 1, 120)
+			p.Rounds = max(1, min(12, p.Rounds))
+			p.Round = max(1, min(p.Rounds, p.Round))
+			if p.Phase != "short" && p.Phase != "long" {
+				p.Phase = "focus"
+			}
+			if len(p.Label) > 40 {
+				p.Label = p.Label[:40]
+			}
+			c.Duration = p.dur()
+		}
 	}
 }
 

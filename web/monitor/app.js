@@ -89,14 +89,20 @@ function clockData(c, now) {
   const el = c.acc + (c.running ? now - c.startAt : 0), d = new Date(now);
   switch (c.mode) {
     case "timer": return { big: dur(el, true), sub: c.running ? "timer" : el ? "paused" : "timer · ready", t: el, bar: null };
+    case "pomodoro": {
+      const p = c.pomo, rem = Math.max(0, c.duration - el), done = p.round - (p.phase === "focus" ? 1 : 0);
+      const name = p.phase === "focus" ? p.label || "Focus" : p.phase === "short" ? "Short break" : "Long break";
+      const dots = p.dots ? "  " + Array.from({ length: p.rounds }, (_, i) => (i < done ? "●" : "○")).join("") : "";
+      return { big: dur(rem + (c.running ? 999 : 0)), sub: `${name}${c.running ? "" : el ? " · paused" : " · ready"}${dots}`, t: rem, bar: rem / c.duration, phase: p.phase, name };
+    }
     case "countdown": { const rem = Math.max(0, c.duration - el); return { big: c.ringing ? "00:00" : dur(rem + (c.running ? 999 : 0)), sub: c.ringing ? "⏰ time's up" : c.running ? "countdown" : "paused", t: rem, bar: rem / c.duration }; }
     case "alarm": { const [ah, am] = c.alarm.split(":").map(Number); let left = ((ah * 60 + am) - (d.getHours() * 60 + d.getMinutes())) * 60 - d.getSeconds(); if (left <= 0) left += 86400; return { big: c.alarm, sub: c.ringing ? "⏰ wake up!" : c.running ? `in ${left / 3600 | 0}h ${pad((left / 60 | 0) % 60)}m` : "off", clock: d, alarm: [ah, am], bar: null }; }
-    default: return { big: `${pad(d.getHours())}:${pad(d.getMinutes())}<small>${pad(d.getSeconds())}</small>`, sub: d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }), clock: d, bar: null };
+    default: return { big: `${pad(d.getHours())}:${pad(d.getMinutes())}<small>${pad(d.getSeconds())}</small>`, sub: d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }), clock: d, bar: null };
   }
 }
 function tickClock(el, it) {
   const c = it.clock, now = Date.now() + skew, d = clockData(c, now), title = it.title && it.title !== "Clock" ? it.title : "";
-  el.classList.toggle("ring", !!c.ringing);
+  el.classList.toggle("ring", !!c.ringing); el.dataset.phase = d.phase || "";
   if (c.display !== "analog") {
     const b = el.querySelector(".big"), s = el.querySelector(".sub"), bar = el.querySelector(".bar");
     const [, mn, sm] = d.big.match(/^(.*?)(?:<small>(.*)<\/small>)?$/); roll(b.firstChild, mn); roll(b.lastChild, sm || "");
@@ -106,7 +112,7 @@ function tickClock(el, it) {
   }
   const al = el.querySelector(".al"); al.style.display = d.alarm && c.running ? "" : "none"; if (d.alarm) rot(el, ".al", ((d.alarm[0] % 12) + d.alarm[1] / 60) * 30);
   el.querySelector(".arc").style.strokeDashoffset = d.bar == null ? 100 : 100 * (1 - d.bar);
-  const lbl = el.querySelector(".lbl"), txt = c.mode === "clock" ? title : c.mode === "alarm" ? c.alarm : d.big.replace(/<[^>]+>/g, ""); if (lbl._v !== txt) lbl.textContent = lbl._v = txt;
+  const lbl = el.querySelector(".lbl"), txt = c.mode === "clock" ? title : c.mode === "alarm" ? c.alarm : c.mode === "pomodoro" ? d.name : d.big.replace(/<[^>]+>/g, ""); if (lbl._v !== txt) lbl.textContent = lbl._v = txt;
 }
 const rot = (el, sel, deg) => { const e = el._h?.[sel] || ((el._h ||= {})[sel] = el.querySelector(sel)); e.setAttribute("transform", `rotate(${(deg % 360).toFixed(2)} 50 50)`); };
 // digits that change slide in; alternate animation names to retrigger without reflow
@@ -119,7 +125,7 @@ function roll(box, str) {
 function hands(el, it) {
   const c = it.clock, now = Date.now() + skew;
   let t; if (c.mode === "clock" || c.mode === "alarm") { const d = new Date(now); t = now / 1000 - d.getTimezoneOffset() * 60; }
-  else { const e = c.acc + (c.running ? now - c.startAt : 0); t = (c.mode === "countdown" ? Math.max(0, c.duration - e) : e) / 1000; }
+  else { const e = c.acc + (c.running ? now - c.startAt : 0); t = (c.mode === "countdown" || c.mode === "pomodoro" ? Math.max(0, c.duration - e) : e) / 1000; }
   rot(el, ".h", t / 3600 * 30); rot(el, ".m", t / 60 * 6); rot(el, ".sec", t * 6);
 }
 // notes & clocks glide to their layout with a critically-damped follow (no restarted CSS transitions)
@@ -155,7 +161,12 @@ $("#items").addEventListener("pointerup", endDrag); $("#items").addEventListener
 let ringT = 0;
 setInterval(() => {
   let ring = false;
-  for (const [id, el] of els) { const it = items.get(id); if (it && it.clock) { tickClock(el, it); ring ||= it.clock.ringing; } }
+  for (const [id, el] of els) {
+    const it = items.get(id); if (!it || !it.clock) continue; tickClock(el, it); ring ||= it.clock.ringing;
+    const c = it.clock; // pomodoro phase change → chime + glow
+    if (el._ch != null && c.chimes > el._ch) { if (c.pomo && c.pomo.sound) { amb.call("bell", 0, .8); setTimeout(() => amb.call("chime", 0, .8), 700); } el.classList.remove("phase-flip"); void el.offsetWidth; el.classList.add("phase-flip"); }
+    el._ch = c.chimes;
+  }
   if (ring && (ringT -= .25) <= 0) { ringT = 1.6; amb.call("alarm", 0, 1); }
 }, 250);
 

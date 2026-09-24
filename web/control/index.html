@@ -59,12 +59,19 @@
         <div class="padwrap"><div id="padPrev" class="padbox bg-paper"><canvas class="ink-c"></canvas></div></div>
       </div>
       <div id="clockEd" hidden>
-        <div class="row segs" id="cMode"><button data-v="clock" class="seg">🕰 clock</button><button data-v="timer" class="seg">⏱ timer</button><button data-v="countdown" class="seg">⏳ countdown</button><button data-v="alarm" class="seg">⏰ alarm</button></div>
+        <div class="row segs" id="cMode"><button data-v="clock" class="seg">🕰 clock</button><button data-v="timer" class="seg">⏱ timer</button><button data-v="countdown" class="seg">⏳ countdown</button><button data-v="alarm" class="seg">⏰ alarm</button><button data-v="pomodoro" class="seg">🍅 pomodoro</button></div>
         <div class="row segs" id="cDisp"><button data-v="digital" class="seg">digital</button><button data-v="analog" class="seg">analog</button></div>
         <div class="row"><span class="mini">style</span><div id="cStyle" class="chips"></div></div>
         <div class="row" id="cDur"><span class="mini">duration</span><input data-u="3600000" class="in num" type="number" min="0" placeholder="h"><input data-u="60000" class="in num" type="number" min="0" max="59" placeholder="m"><input data-u="1000" class="in num" type="number" min="0" max="59" placeholder="s"></div>
-        <div class="row" id="cAlarm"><span class="mini">alarm at</span><input id="alarmAt" type="time" class="in"><label class="chk"><input type="checkbox" id="armed"> armed</label></div>
-        <div class="row" id="cCtl"><button data-act="start" class="btn">▶ start</button><button data-act="pause" class="btn">❚❚ pause</button><button data-act="reset" class="btn">↺ reset</button><button data-act="dismiss" class="btn warn" id="dismiss">🔕 stop</button></div>
+        <div class="row" id="cAlarm"><span class="mini">alarm at</span><input id="alH" class="in num" type="number" min="0" max="23" placeholder="HH" title="hour (0-23)"><b>:</b><input id="alM" class="in num" type="number" min="0" max="59" placeholder="MM" title="minute"><label class="chk"><input type="checkbox" id="armed"> armed</label></div>
+        <div class="row" id="cCtl"><button data-act="start" class="btn">▶ start</button><button data-act="pause" class="btn">❚❚ pause</button><button data-act="reset" class="btn">↺ reset</button><button data-act="skip" class="btn" id="skipBtn">⏭ skip</button><button data-act="dismiss" class="btn warn" id="dismiss">🔕 stop</button></div>
+        <div id="cPomo">
+          <div class="row"><span class="mini">presets</span><div class="chips" id="pPre"><button class="seg" data-p="25,5,15,4">25 / 5</button><button class="seg" data-p="50,10,20,3">50 / 10</button><button class="seg" data-p="90,20,30,2">90 / 20</button><button class="seg" data-p="15,3,10,4">15 / 3</button></div></div>
+          <div class="grid4"><label>focus (min)<input data-pk="focus" class="in num" type="number" min="1" max="240"></label><label>short break<input data-pk="short" class="in num" type="number" min="1" max="60"></label><label>long break<input data-pk="long" class="in num" type="number" min="1" max="120"></label><label>rounds<input data-pk="rounds" class="in num" type="number" min="1" max="12"></label></div>
+          <div class="row"><span class="mini">focus label</span><input id="pLabel" class="in grow" placeholder="Focus" maxlength="40"></div>
+          <div class="row wrap"><label class="chk"><input type="checkbox" data-pb="autoBreak"> auto-start breaks</label><label class="chk"><input type="checkbox" data-pb="autoFocus"> auto-start focus</label><label class="chk"><input type="checkbox" data-pb="sound"> chime</label><label class="chk"><input type="checkbox" data-pb="dots"> round dots</label></div>
+          <div class="row"><span id="pDone" class="mini"></span><span class="grow"></span><button id="pResetCount" class="btn sm ghost">reset count</button></div>
+        </div>
         <div id="cLive" class="live mono"></div>
       </div>
     </div>

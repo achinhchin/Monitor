@@ -49,7 +49,8 @@ The `data` and `v` columns hold the JSON of the Go structs, so fields can be que
 - `Screen{id,name,scene,fpsCap,locked,w,h,dpr,online,fps,audio,battery,lastSeen}` is created the first time a monitor connects with that id. Monitors report their size, fps, audio state and battery through `stats`. A second connection with the same screen id **kicks the older one**; different ids coexist.
 - `Item{id,kind:"note"|"clock"|"pad",title,content,font,fontSize,z,clock?,pad?{bg: paper|grid|dark|glass|clear},layouts{screenId: Layout}}`
   - `Layout{x,y,w,h,on}` stores fractions of that screen's viewport. Every item has one layout per screen: notes default to the bottom right, clocks to the top right.
-  - `Clock{mode: clock|timer|countdown|alarm, display: digital|analog, style, duration, running, startAt, acc, alarm "HH:MM", ringing, ringAt, fired}`. Elapsed time is `acc + (running ? now-startAt : 0)`, using server epoch ms; monitors correct for clock skew with `serverTime`. For an alarm, `running` means armed.
+  - `Clock{mode: clock|timer|countdown|alarm|pomodoro, display: digital|analog, style, duration, running, startAt, acc, alarm "HH:MM", ringing, ringAt, fired}`. Elapsed time is `acc + (running ? now-startAt : 0)`, using server epoch ms; monitors correct for clock skew with `serverTime`. For an alarm, `running` means armed.
+  - **Pomodoro** (`mode: "pomodoro"`): `Clock.Pomo{focus,short,long (min), rounds, autoBreak, autoFocus, sound, dots, label, phase: focus|short|long, round, done}`. The current phase reuses `running/startAt/acc`, and `duration` is the length of the current phase. When a phase runs out, `pomoNext` moves focus → short break, or long break after `rounds` focus sessions, then back to focus. It counts `done`, bumps `chimes` so screens can play a bell and flash a glow, and auto-starts the next phase according to `autoBreak`/`autoFocus`. The `clock.act` message also supports `skip` (next phase, no count) and `resetcount`, and `reset` goes back to focus round 1.
   - `checkClocks` runs every second: a finished countdown or a matching alarm time (in **server local time**) sets `ringing`, which clears itself after 3 minutes or when dismissed.
 - `Env{dayMs, yearMs, dayMin, nightMin, seasonMin[4], paused, speed, seasonLocked, weatherMode, knobs{animals,rain,wind,volume,grain}, muted, showHud, w}`
   - The day cycle is `dayMin + nightMin` minutes. The phase is stretched so 0 is sunrise and .5 is sunset, which makes day and night last different lengths. Seasons use `seasonMin[i]` each. Changing any of these lengths keeps the current phase and season position.
@@ -74,7 +75,7 @@ Client → server (`type`, fields):
 | `item.update` | `id, patch` (JSON merge into the Item; the `clock` sub-object merges too) | control |
 | `item.front` / `item.delete` | `id` | control (a monitor may also send `item.front` unless locked) |
 | `layout.set` | `id, screen` (`"*"` = all screens), `patch:{x,y,w,h,on}` | control; monitor for its own screen unless `locked` |
-| `clock.act` | `id, act: start\|pause\|reset\|dismiss` | control |
+| `clock.act` | `id, act: start\|pause\|reset\|dismiss\|skip\|resetcount` | control |
 | `env.set` | `patch`: any Env field, plus `season` (jump), `hour` (jump), `reroll` | control |
 | `screen.update` | `screen, patch:{name,scene,fpsCap,locked}` | control |
 | `screen.delete` | `screen` (offline only; also drops its layouts) | control |
@@ -155,3 +156,6 @@ Interactive objects:
 - **New scene**: add an object to `SCENES`, a `BEDS` entry in audio.js, the name to the `scenes` map in hub.go, and an `<option>` in the control.
 - **New species**: add an `SP` entry and a `DRAW` function, then list the species in a scene's `life`.
 - **New env field**: add it to `Env` and `fixEnv` in hub.go and to the control's UI and `setEnv`, then read it from `st.kn` or `env.env` on the monitor.
+
+## Language
+All UI text is English. Dates and times are formatted with `en-US` explicitly (`toLocaleDateString("en-US")`), and the alarm time uses two number fields instead of `<input type=time>`, which renders in the OS locale.

@@ -49,6 +49,8 @@ body.lite .glassy{backdrop-filter:none;-webkit-backdrop-filter:none;background:c
 .s-retro{background:#2b2118;--bg:#2b2118;--fg:#ffb347;--dim:#c98a3a;--acc:#ff6a3d;color:#ffb347;border-radius:10px;border:3px solid #4a3828;text-shadow:0 0 10px rgba(255,160,60,.5)}
 .s-mono{background:#111;--bg:#111;--fg:#fff;--dim:#aaa;--acc:#fff;color:#fff;border-radius:6px}
 .s-pastel{background:linear-gradient(135deg,#ffd6e7,#d6e4ff);--bg:#fff6fb;--fg:#5a4a78;--dim:#8b7aa8;--acc:#ff8fb8;color:#5a4a78;border-radius:22px;box-shadow:0 10px 30px rgba(150,120,200,.25)}
+.clk[data-phase=focus]{--acc:#ff7a6b}.clk[data-phase=short],.clk[data-phase=long]{--acc:#4fc3a1}.clk[data-phase] .bar i{transition:width .25s linear,background 1s}
+.phase-flip{animation:flip 1.4s ease-out}@keyframes flip{0%{box-shadow:0 0 0 0 var(--acc)}30%{box-shadow:0 0 0 10px color-mix(in srgb,var(--acc) 45%,transparent)}100%{box-shadow:0 0 0 22px transparent}}
 .ring{animation:ring 1.6s ease-in-out infinite}
 @keyframes ring{0%,100%{rotate:0deg;scale:1}8%{rotate:-2.5deg;scale:1.03}16%{rotate:2.5deg;scale:1.03}24%{rotate:-1.5deg}32%{rotate:0deg;scale:1}}
 @keyframes pop{from{opacity:0;scale:.92;filter:blur(6px)}}
